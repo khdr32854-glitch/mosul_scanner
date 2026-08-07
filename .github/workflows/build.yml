@@ -20,16 +20,14 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Re-create Android Platform
-        run: |
-          rm -rf android
-          flutter create . --platforms=android --force
+      - name: Create Android project structure
+        run: flutter create . --platforms=android --org com.example
 
-      - name: Install Dependencies
+      - name: Get Dependencies
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
