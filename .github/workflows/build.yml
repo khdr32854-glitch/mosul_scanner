@@ -20,8 +20,15 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Create Android project structure
-        run: flutter create . --platforms=android --org com.example
+      - name: Create Android Structure
+        run: |
+          rm -rf android
+          flutter create . --platforms=android --org com.example
+
+      - name: Fix Android Namespace & Gradle
+        run: |
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
 
       - name: Get Dependencies
         run: flutter pub get
