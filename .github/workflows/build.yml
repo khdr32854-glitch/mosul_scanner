@@ -20,8 +20,10 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Platform Files
-        run: flutter create . --platforms=android --force
+      - name: Re-create Android Platform
+        run: |
+          rm -rf android
+          flutter create . --platforms=android --force
 
       - name: Install Dependencies
         run: flutter pub get
