@@ -17,16 +17,13 @@ class MosulScannerApp extends StatelessWidget {
       title: 'مكتب علاء الحديدي - الماسح الذكي',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.sky,
+        primarySwatch: Colors.blue,
         useMaterial3: true,
-        fontFamily: 'sans-serif',
       ),
       home: const MainScannerScreen(),
     );
   }
 }
-
-enum PaperMode { docs, photos, photosSelphy }
 
 class MainScannerScreen extends StatefulWidget {
   const MainScannerScreen({super.key});
@@ -36,7 +33,6 @@ class MainScannerScreen extends StatefulWidget {
 }
 
 class _MainScannerScreenState extends State<MainScannerScreen> {
-  PaperMode currentMode = PaperMode.docs;
   final List<DocumentItem> _items = [];
   DocumentItem? _activeItem;
   final ImagePicker _picker = ImagePicker();
@@ -44,8 +40,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   void _addNewImage(ImageSource source) async {
     final XFile? pickedFile = await _picker.pickImage(source: source);
     if (pickedFile != null) {
-      final File file = File(pickedFile.path);
-      final bytes = await file.readAsBytes();
+      final bytes = await File(pickedFile.path).readAsBytes();
       final decodedImg = img.decodeImage(bytes);
 
       if (decodedImg != null) {
@@ -102,7 +97,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('مكتب علاء الحديدي - الطباعة والقص الذكي', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        title: const Text('مكتب علاء الحديدي - الماسح الذكي', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF0284C7),
         foregroundColor: Colors.white,
         actions: [
@@ -180,7 +175,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
               color: const Color(0xFF475569),
               child: Center(
                 child: AspectRatio(
-                  aspectRatio: 210 / 297, // أبعاد ورقة A4
+                  aspectRatio: 210 / 297,
                   child: Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -190,7 +185,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                       children: _items.map((item) {
                         final isActive = _activeItem?.id == item.id;
                         return Positioned(
-                          left: item.xMm * 2, // تحويل بسيط للتناسب على الشاشة
+                          left: item.xMm * 2,
                           top: item.yMm * 2,
                           width: item.widthMm * 2,
                           height: item.heightMm * 2,
@@ -253,7 +248,7 @@ class DocumentItem {
 }
 
 // ==========================================
-// شاشة القص الذكي الحر والتحسين المتقدم
+// شاشة القص الذكي الحر بدون أي تعارض إصدارات
 // ==========================================
 class SmartCropScreen extends StatefulWidget {
   final img.Image image;
@@ -270,7 +265,6 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
   @override
   void initState() {
     super.initState();
-    // تحديد زوايا تلقائية للقص الحر (10% هامش من الأطراف)
     points = [
       const Offset(0.1, 0.1),
       const Offset(0.9, 0.1),
@@ -279,29 +273,9 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
     ];
   }
 
-  void _applySmartMagicFilter(img.Image image) {
-    // خوارزمية التبييض والتوضيح السحرية للمستمسكات
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        int r = pixel.r.toInt();
-        int g = pixel.g.toInt();
-        int b = pixel.b.toInt();
-
-        // تباين وتبييض ذكي للورقة
-        r = ((r - 128) * 1.3 + 135).clamp(0, 255).toInt();
-        g = ((g - 128) * 1.3 + 135).clamp(0, 255).toInt();
-        b = ((b - 128) * 1.3 + 135).clamp(0, 255).toInt();
-
-        image.setPixelRgb(x, y, r, g, b);
-      }
-    }
-  }
-
   void _processCrop() {
     final src = widget.image;
-    
-    // استخراج المنطقة المحددة بالقص العادي أو المائل
+
     int minX = (points.map((p) => p.dx).reduce(min) * src.width).toInt().clamp(0, src.width - 1);
     int maxX = (points.map((p) => p.dx).reduce(max) * src.width).toInt().clamp(1, src.width);
     int minY = (points.map((p) => p.dy).reduce(min) * src.height).toInt().clamp(0, src.height - 1);
@@ -313,7 +287,7 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
     img.Image cropped = img.copyCrop(src, x: minX, y: minY, width: cropW, height: cropH);
 
     if (isMagicFilter) {
-      _applySmartMagicFilter(cropped);
+      cropped = img.adjustColor(cropped, brightness: 1.15, contrast: 1.2);
     }
 
     Navigator.pop(context, cropped);
@@ -336,7 +310,6 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
       ),
       body: Column(
         children: [
-          // شريط أدوات الفلاتر والقص الذكي
           Container(
             color: Colors.black54,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -365,7 +338,6 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
               ],
             ),
           ),
-          // منطقة معاينة الصورة وسحب نقاط القص بحرية
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -380,12 +352,10 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                         fit: BoxFit.contain,
                       ),
                     ),
-                    // رسم خطوط اتصال نقاط القص الأربعة
                     CustomPaint(
                       size: Size(w, h),
                       painter: CropLinesPainter(points: points),
                     ),
-                    // مقابض سحب الزوايا الأربعة باللمس
                     ...List.generate(4, (index) {
                       return Positioned(
                         left: points[index].dx * w - 18,
@@ -422,7 +392,6 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
   }
 }
 
-// رسام الخطوط بين نقاط القص
 class CropLinesPainter extends CustomPainter {
   final List<Offset> points;
   CropLinesPainter({required this.points});
