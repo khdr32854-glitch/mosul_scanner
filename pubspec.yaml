@@ -1,23 +1,23 @@
 name: mosul_scanner
-description: مكتب علاء الحديدي - ماسح مستندات احترافي
+description: "A new Flutter project."
 publish_to: 'none'
+
 version: 1.0.0+1
 
 environment:
-  sdk: '>=2.18.0 <3.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  image_picker: ^0.8.7
-  image: ^4.0.17
-  path_provider: ^2.0.15
-  share_plus: ^4.5.3
-  permission_handler: ^10.2.0
+  image_picker: ^1.1.2
+  image: ^4.2.0
+  share_plus: ^10.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
