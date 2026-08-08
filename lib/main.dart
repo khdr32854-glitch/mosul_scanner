@@ -154,14 +154,28 @@ class _MainScreenState extends State<MainScreen> {
             Expanded(child: Container(color: const Color(0xFF1E293B),
               child: Center(child: Container(width: pwM * sc, height: phM * sc,
                 decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 12)]),
-                child: ClipRect(child: Stack(children: List.generate(_items.length, (i){ final it=_items[i]; final act=_sel?.id==it.id;
-                  return Positioned(left: it.xMm*sc, top: it.yMm*sc, width: it.wMm*sc, height: it.hMm*sc,
-                    child: GestureDetector(onTap:()=>setState(()=>_sel=it),
-                      onPanUpdate:(d)=>setState((){ it.xMm+=d.delta.dx/sc; it.yMm+=d.delta.dy/sc; }),
-                      child: Container(decoration: BoxDecoration(
-                        border: Border.all(color: act?Colors.blue:(it.photo?Colors.red.withOpacity(0.4):Colors.transparent), width: act?3:1),
-                        boxShadow: act?[BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8)]:null),
-                        child: Transform.rotate(angle: it.rot*pi/180, child: Image.memory(it.bytes, fit: BoxFit.fill))))); }))))),
+                child: ClipRect(child: Stack(children: [
+                  for (int i = 0; i < _items.length; i++)
+                    (() {
+                      final it = _items[i];
+                      final act = _sel?.id == it.id;
+                      return Positioned(
+                        left: it.xMm * sc, top: it.yMm * sc,
+                        width: it.wMm * sc, height: it.hMm * sc,
+                        child: GestureDetector(
+                          onTap: () => setState(() => _sel = it),
+                          onPanUpdate: (d) => setState(() { it.xMm += d.delta.dx / sc; it.yMm += d.delta.dy / sc; }),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: act ? Colors.blue : (it.photo ? Colors.red.withOpacity(0.4) : Colors.transparent),
+                                width: act ? 3 : 1),
+                              boxShadow: act ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8)] : null),
+                            child: Transform.rotate(
+                              angle: it.rot * pi / 180,
+                              child: Image.memory(it.bytes, fit: BoxFit.fill)))));
+                    })(),
+                ]))),
               ))),
           ]))
         ]);
