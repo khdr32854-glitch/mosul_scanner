@@ -80,12 +80,13 @@ class SmartScanner {
 
     // تصغير الصورة للتحليل
     const maxDim = 300;
-    final ratio = max(w, h) / maxDim;
+    double ratio = max(w, h) / maxDim;
     img.Image small;
     if (ratio > 1) {
       small = img.copyResize(src, width: (w / ratio).round());
     } else {
-      small = src; ratio = 1.0;
+      small = src;
+      ratio = 1.0;
     }
 
     // 1. تقدير لون الخلفية من الحواف
@@ -107,29 +108,29 @@ class SmartScanner {
     }
   }
 
-  static List<double>? _estimateBackground(img.Image img) {
-    final w = img.width, h = img.height;
+  static List<double>? _estimateBackground(img.Image src) {
+    final w = src.width, h = src.height;
     final edge = max(6, min(w, h) ~/ 15);
     double rs = 0, gs = 0, bs = 0;
     int n = 0;
     for (int x = 0; x < w; x++) {
-      for (int y = 0; y < edge && y < h; y++) { final p = img.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
-      for (int y = max(0, h - edge); y < h; y++) { final p = img.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
+      for (int y = 0; y < edge && y < h; y++) { final p = src.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
+      for (int y = max(0, h - edge); y < h; y++) { final p = src.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
     }
     for (int y = edge; y < h - edge; y++) {
-      for (int x = 0; x < edge && x < w; x++) { final p = img.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
-      for (int x = max(0, w - edge); x < w; x++) { final p = img.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
+      for (int x = 0; x < edge && x < w; x++) { final p = src.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
+      for (int x = max(0, w - edge); x < w; x++) { final p = src.getPixel(x, y); rs += p.r; gs += p.g; bs += p.b; n++; }
     }
     if (n == 0) return null;
     return [rs / n, gs / n, bs / n];
   }
 
-  static List<List<int>> _buildDiffMap(img.Image img, List<double> bg) {
-    final w = img.width, h = img.height;
+  static List<List<int>> _buildDiffMap(img.Image src, List<double> bg) {
+    final w = src.width, h = src.height;
     final map = List.generate(h, (_) => List.filled(w, 0));
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
-        final p = img.getPixel(x, y);
+        final p = src.getPixel(x, y);
         final dr = p.r - bg[0], dg = p.g - bg[1], db = p.b - bg[2];
         map[y][x] = sqrt(dr * dr + dg * dg + db * db).round();
       }
@@ -161,15 +162,15 @@ class SmartScanner {
     return [lft / w, top / h, rgt / w, bot / h];
   }
 
-  static List<double>? _scanFromEdges(img.Image img, List<double> bg) {
-    final w = img.width, h = img.height;
+  static List<double>? _scanFromEdges(img.Image src, List<double> bg) {
+    final w = src.width, h = src.height;
     final step = max(2, min(w, h) ~/ 40);
     final threshold = 30.0;
 
     int countRow(int y) {
       int c = 0;
       for (int x = 0; x < w; x += 2) {
-        final p = img.getPixel(x, y);
+        final p = src.getPixel(x, y);
         final d = sqrt((p.r-bg[0])*(p.r-bg[0]) + (p.g-bg[1])*(p.g-bg[1]) + (p.b-bg[2])*(p.b-bg[2]));
         if (d > threshold) c++;
       }
@@ -178,7 +179,7 @@ class SmartScanner {
     int countCol(int x) {
       int c = 0;
       for (int y = 0; y < h; y += 2) {
-        final p = img.getPixel(x, y);
+        final p = src.getPixel(x, y);
         final d = sqrt((p.r-bg[0])*(p.r-bg[0]) + (p.g-bg[1])*(p.g-bg[1]) + (p.b-bg[2])*(p.b-bg[2]));
         if (d > threshold) c++;
       }
@@ -205,14 +206,14 @@ class SmartScanner {
     return img.copyCrop(src, x: l, y: t, width: cw, height: ch);
   }
 
-  static img.Image _applyCropDirect(img.Image img, List<double> b) {
-    final l = (b[0] * img.width).round().clamp(0, img.width - 1);
-    final t = (b[1] * img.height).round().clamp(0, img.height - 1);
-    final r = (b[2] * img.width).round().clamp(1, img.width);
-    final bt = (b[3] * img.height).round().clamp(1, img.height);
+  static img.Image _applyCropDirect(img.Image image, List<double> b) {
+    final l = (b[0] * image.width).round().clamp(0, image.width - 1);
+    final t = (b[1] * image.height).round().clamp(0, image.height - 1);
+    final r = (b[2] * image.width).round().clamp(1, image.width);
+    final bt = (b[3] * image.height).round().clamp(1, image.height);
     final cw = r - l, ch = bt - t;
-    if (cw < 20 || ch < 20) return img;
-    return img.copyCrop(img, x: l, y: t, width: cw, height: ch);
+    if (cw < 20 || ch < 20) return image;
+    return img.copyCrop(image, x: l, y: t, width: cw, height: ch);
   }
 
   static img.Image softEnhance(img.Image src) {
