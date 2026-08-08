@@ -2,567 +2,272 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'crop_engine.dart';
 
-void main() {
-  runApp(const MosulScannerApp());
-}
+void main() => runApp(const MosulScannerApp());
 
 class MosulScannerApp extends StatelessWidget {
   const MosulScannerApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'مكتب علاء الحديدي - الماسح والطباعة الذكية',
+      title: 'مكتب علاء الحديدي - الماسح والطباعة',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const MainScannerScreen(),
+      home: const MainScreen(),
     );
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// OPENCV METHOD CHANNEL
-// ═══════════════════════════════════════════════════════
-class OpenCvBridge {
-  static const _channel = MethodChannel('com.mosulscanner/documentscanner');
-  static bool _warned = false;
-
-  static Future<String?> scanDocument(String inputPath) async {
-    final dir = Directory.systemTemp;
-    final outputPath = '${dir.path}/scanned_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    try {
-      final success = await _channel.invokeMethod('scanDocument', {
-        'inputPath': inputPath,
-        'outputPath': outputPath,
-      });
-      if (success == true && File(outputPath).existsSync()) {
-        return outputPath;
-      }
-    } catch (e) {
-      if (!_warned) {
-        _warned = true;
-      }
-    }
-    return null;
-  }
-
-  static Future<String?> enhanceImage(String inputPath) async {
-    final dir = Directory.systemTemp;
-    final outputPath = '${dir.path}/enhanced_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    try {
-      final success = await _channel.invokeMethod('enhanceImage', {
-        'inputPath': inputPath,
-        'outputPath': outputPath,
-      });
-      if (success == true && File(outputPath).existsSync()) {
-        return outputPath;
-      }
-    } catch (_) {}
-    return null;
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-// DATA MODEL
-// ═══════════════════════════════════════════════════════
-class DocumentItem {
+class DocItem {
   String id;
   img.Image image;
-  Uint8List cachedBytes;
-  double widthMm;
-  double heightMm;
-  double xMm;
-  double yMm;
-  double rotation;
-  bool isPhotoStyle;
+  Uint8List bytes;
+  double wMm, hMm, xMm, yMm;
+  int rot;
+  bool photo;
+  DocItem({required this.id, required this.image, required this.bytes, required this.wMm, required this.hMm, required this.xMm, required this.yMm, this.rot = 0, this.photo = false});
 
-  DocumentItem({
-    required this.id,
-    required this.image,
-    required this.cachedBytes,
-    required this.widthMm,
-    required this.heightMm,
-    required this.xMm,
-    required this.yMm,
-    this.rotation = 0,
-    this.isPhotoStyle = false,
-  });
-
-  img.Image get rotatedImage {
-    if (rotation % 360 == 0) return image;
-    final r = (rotation % 360 + 360) % 360;
+  img.Image get rotated {
+    if (rot % 360 == 0) return image;
+    final r = (rot % 360 + 360) % 360;
     if (r == 90) return img.copyRotate(image, angle: 90);
     if (r == 180) return img.copyRotate(image, angle: 180);
     if (r == 270) return img.copyRotate(image, angle: 270);
     return image;
   }
-
-  void applyRotation() {
-    if (rotation % 360 == 0) return;
-    image = rotatedImage;
-    cachedBytes = Uint8List.fromList(img.encodeJpg(image, quality: 92));
-    final tmp = widthMm; widthMm = heightMm; heightMm = tmp;
-    rotation = 0;
+  void applyRot() {
+    if (rot % 360 == 0) return;
+    image = rotated;
+    bytes = Uint8List.fromList(ImageUtils.encodeJpg(image));
+    final t = wMm; wMm = hMm; hMm = t; rot = 0;
+  }
+  void replaceImage(img.Image newImg) {
+    image = newImg; bytes = Uint8List.fromList(ImageUtils.encodeJpg(newImg));
+    rot = 0; hMm = newImg.height / newImg.width * wMm;
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// خوارزمية احتياطية (Dart-only Sobel) إذا فشل OpenCV
-// ═══════════════════════════════════════════════════════
-class SmartScanner {
-  static img.Image autoCrop(img.Image src) {
-    final w = src.width, h = src.height;
-    if (w < 50 || h < 50) return src;
-    const maxDim = 256;
-    final ratio = max(w, h) / maxDim;
-    final img.Image small;
-    if (ratio > 1) {
-      small = img.copyResize(src, width: (w / ratio).round());
-    } else {
-      small = img.copyResize(src, width: w);
-    }
-    final gray = img.grayscale(small);
-    final blur = img.gaussianBlur(gray, radius: 2);
-    final edges = _sobelEdges(blur);
-    final bounds = _findBounds(edges);
-    if (bounds == null) return src;
-    final l = (bounds[0] * src.width / ratio).round().clamp(0, src.width - 1);
-    final t = (bounds[1] * src.height / ratio).round().clamp(0, src.height - 1);
-    final r = (bounds[2] * src.width / ratio).round().clamp(1, src.width);
-    final b = (bounds[3] * src.height / ratio).round().clamp(1, src.height);
-    final cw = r - l, ch = b - t;
-    if (cw < 20 || ch < 20) return src;
-    return img.copyCrop(src, x: l, y: t, width: cw, height: ch);
-  }
-
-  static img.Image _sobelEdges(img.Image gray) {
-    final w = gray.width, h = gray.height;
-    final e = img.Image(width: w, height: h);
-    for (int y = 1; y < h - 1; y++) {
-      for (int x = 1; x < w - 1; x++) {
-        final a = gray.getPixel(x-1, y-1).r.toInt(), b = gray.getPixel(x, y-1).r.toInt(), c = gray.getPixel(x+1, y-1).r.toInt();
-        final d = gray.getPixel(x-1, y).r.toInt(), f = gray.getPixel(x+1, y).r.toInt();
-        final g = gray.getPixel(x-1, y+1).r.toInt(), hh = gray.getPixel(x, y+1).r.toInt(), i = gray.getPixel(x+1, y+1).r.toInt();
-        final gx = (c+2*f+i) - (a+2*d+g), gy = (g+2*hh+i) - (a+2*b+c);
-        final m = sqrt(gx*gx + gy*gy).toInt().clamp(0, 255);
-        e.setPixelRgba(x, y, m, m, m, 255);
-      }
-    }
-    return e;
-  }
-
-  static List<double>? _findBounds(img.Image edges) {
-    final w = edges.width, h = edges.height;
-    final hp = List.filled(h, 0), vp = List.filled(w, 0);
-    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) if (edges.getPixel(x, y).r.toInt() > 50) { hp[y]++; vp[x]++; }
-    final mh = hp.reduce(max), mv = vp.reduce(max);
-    if (mh < 6 || mv < 6) return null;
-    final th = (mh * 0.10).ceilToDouble(), tv = (mv * 0.10).ceilToDouble();
-    int? top, bot, lft, rgt;
-    for (int y = 0; y < h; y++) if (hp[y] >= th) { top = y; break; }
-    for (int y = h - 1; y >= 0; y--) if (hp[y] >= th) { bot = y; break; }
-    for (int x = 0; x < w; x++) if (vp[x] >= tv) { lft = x; break; }
-    for (int x = w - 1; x >= 0; x--) if (vp[x] >= tv) { rgt = x; break; }
-    if (top == null || bot == null || lft == null || rgt == null) return null;
-    final dw = rgt - lft, dh = bot - top;
-    if (dw < w * 0.04 || dh < h * 0.04 || (dw > w * 0.96 && dh > h * 0.96)) return null;
-    return [lft/w - 0.01, top/h - 0.01, rgt/w + 0.01, bot/h + 0.01];
-  }
-
-  static img.Image softEnhance(img.Image src) => img.adjustColor(src, brightness: 1.04, contrast: 1.10);
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+  @override State<MainScreen> createState() => _MainScreenState();
 }
 
-// ═══════════════════════════════════════════════════════
-// MAIN SCREEN
-// ═══════════════════════════════════════════════════════
-class MainScannerScreen extends StatefulWidget {
-  const MainScannerScreen({super.key});
-  @override
-  State<MainScannerScreen> createState() => _MainScannerScreenState();
-}
-
-class _MainScannerScreenState extends State<MainScannerScreen> {
-  final List<DocumentItem> _items = [];
-  DocumentItem? _activeItem;
+class _MainScreenState extends State<MainScreen> {
+  final List<DocItem> _items = [];
+  DocItem? _sel;
   final ImagePicker _picker = ImagePicker();
   String _mode = 'docs';
-  bool _processing = false;
+  bool _busy = false;
+  static const pwM = 210.0, phM = 297.0, mM = 10.0;
 
-  static const double pwMm = 210, phMm = 297, mMm = 10;
-
-  void _addImages(ImageSource source) async {
+  void _addImgs(ImageSource src) async {
     final List<XFile> files = [];
-    if (source == ImageSource.gallery) {
-      files.addAll(await _picker.pickMultiImage());
-    } else {
-      final f = await _picker.pickImage(source: source, imageQuality: 95);
-      if (f != null) files.add(f);
-    }
+    if (src == ImageSource.gallery) { files.addAll(await _picker.pickMultiImage()); }
+    else { final f = await _picker.pickImage(source: src, imageQuality: 95); if (f != null) files.add(f); }
     for (int i = 0; i < files.length; i++) {
-      final bytes = await File(files[i].path).readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) continue;
-      final encoded = Uint8List.fromList(img.encodeJpg(decoded, quality: 92));
+      final raw = await File(files[i].path).readAsBytes();
+      final dec = ImageUtils.decodeJpg(raw); if (dec == null) continue;
+      final enc = Uint8List.fromList(ImageUtils.encodeJpg(dec));
       setState(() {
-        final item = DocumentItem(
-          id: '${DateTime.now().millisecondsSinceEpoch}$i',
-          image: decoded, cachedBytes: encoded,
-          widthMm: _mode == 'photos' ? 36 : 85,
-          heightMm: _mode == 'photos' ? 45 : (decoded.height / decoded.width * 85),
-          xMm: mMm + (_items.length * 4), yMm: mMm + (_items.length * 4),
-          isPhotoStyle: _mode == 'photos',
-        );
-        _items.add(item); _activeItem = item;
+        final item = DocItem(id: '${DateTime.now().millisecondsSinceEpoch}$i', image: dec, bytes: enc,
+          wMm: _mode == 'photos' ? 36 : 85, hMm: _mode == 'photos' ? 45 : (dec.height / dec.width * 85),
+          xMm: mM + _items.length * 4, yMm: mM + _items.length * 4, photo: _mode == 'photos');
+        _items.add(item); _sel = item;
       });
     }
   }
 
-  void _resize(double w, double h, {bool p = false}) {
-    if (_activeItem == null) return;
-    setState(() { _activeItem!.widthMm = w; _activeItem!.heightMm = h; _activeItem!.isPhotoStyle = p; });
-  }
-  void _rotate() { if (_activeItem != null) setState(() => _activeItem!.applyRotation()); }
-  void _duplicate() {
-    if (_activeItem == null) return;
-    final s = _activeItem!;
-    setState(() {
-      _items.add(DocumentItem(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        image: img.copyResize(s.image, width: s.image.width),
-        cachedBytes: Uint8List.fromList(s.cachedBytes),
-        widthMm: s.widthMm, heightMm: s.heightMm,
-        xMm: s.xMm + 5, yMm: s.yMm + 5,
-        rotation: s.rotation, isPhotoStyle: s.isPhotoStyle,
-      ));
-      _activeItem = _items.last;
-    });
-  }
-  void _align() {
-    setState(() {
-      double cx = mMm, cy = mMm, mh = 0;
-      for (var i in _items) {
-        if (cx + i.widthMm > pwMm - mMm) { cx = mMm; cy += mh + 5; mh = 0; }
-        i.xMm = cx; i.yMm = cy; cx += i.widthMm + 5;
-        if (i.heightMm > mh) mh = i.heightMm;
-      }
-    });
-  }
+  void _resz(double w, double h, {bool p = false}) { if (_sel != null) setState(() { _sel!.wMm = w; _sel!.hMm = h; _sel!.photo = p; }); }
+  void _rot() { if (_sel != null) setState(() => _sel!.applyRot()); }
+  void _dup() { if (_sel == null) return; final s = _sel!;
+    setState(() { _items.add(DocItem(id: '${DateTime.now().millisecondsSinceEpoch}', image: img.copyResize(s.image, width: s.image.width),
+      bytes: Uint8List.fromList(s.bytes), wMm: s.wMm, hMm: s.hMm, xMm: s.xMm + 5, yMm: s.yMm + 5, rot: s.rot, photo: s.photo)); _sel = _items.last; }); }
+  void _aln() { setState(() { double cx = mM, cy = mM, mh = 0;
+    for (var i in _items) { if (cx + i.wMm > pwM - mM) { cx = mM; cy += mh + 5; mh = 0; }
+      i.xMm = cx; i.yMm = cy; cx += i.wMm + 5; if (i.hMm > mh) mh = i.hMm; } }); }
 
-  /// القص الذكي — يحاول OpenCV أولاً، ثم Sobel الاحتياطي
-  void _smartCrop() async {
-    if (_activeItem == null) return;
-    setState(() => _processing = true);
+  void _autoCrop() { if (_sel == null) return; setState(() => _busy = true);
+    Future(() { if (!mounted) return;
+      var r = SmartCrop.adaptiveThreshold(_sel!.rotated);
+      if (!r.changed) r = SmartCrop.sobelEdges(_sel!.rotated);
+      if (mounted) { if (r.changed) { setState(() { _sel!.replaceImage(r.image); _busy = false; }); }
+        else { setState(() => _busy = false); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('لم يتم اكتشاف مستند واضح'), backgroundColor: Colors.orange, duration: Duration(seconds: 2))); } } }); }
 
-    final item = _activeItem!;
-    final tempDir = Directory.systemTemp;
-    final inputPath = '${tempDir.path}/scan_input_${DateTime.now().millisecondsSinceEpoch}.jpg';
+  void _manualCrop() async { if (_sel == null) return;
+    final ri = _sel!.rotated; final res = await Navigator.push<img.Image>(context, MaterialPageRoute(builder: (_) => CropScreen(image: ri)));
+    if (res != null && mounted) setState(() => _sel!.replaceImage(res)); }
 
-    try {
-      // حفظ الصورة مؤقتاً
-      await File(inputPath).writeAsBytes(item.cachedBytes);
+  void _prnt() async { final doc = pw.Document();
+    doc.addPage(pw.Page(pageFormat: PdfPageFormat.a4, margin: pw.EdgeInsets.zero, build: (_) { final ws = <pw.Widget>[];
+      for (final i in _items) { final pi = i.rotated; ws.add(pw.Positioned(left: i.xMm * PdfPageFormat.mm, top: i.yMm * PdfPageFormat.mm,
+        child: pw.SizedBox(width: i.wMm * PdfPageFormat.mm, height: i.hMm * PdfPageFormat.mm,
+          child: pw.Image(pw.MemoryImage(Uint8List.fromList(ImageUtils.encodeJpg(pi, quality: 95))), fit: pw.BoxFit.fill)))); }
+      return pw.Stack(children: List<pw.Widget>.from(ws)); }));
+    await Printing.layoutPdf(onLayout: (_) async => doc.save()); }
 
-      // المحاولة الأولى: OpenCV الأصلي (مثل CamScanner)
-      final openCvResult = await OpenCvBridge.scanDocument(inputPath);
-
-      img.Image? result;
-
-      if (openCvResult != null) {
-        // نجح OpenCV!
-        final bytes = await File(openCvResult).readAsBytes();
-        result = img.decodeImage(bytes);
-        try { File(openCvResult).deleteSync(); } catch (_) {}
-      }
-
-      if (result == null && mounted) {
-        // المحاولة الثانية: خوارزمية Dart الاحتياطية
-        result = SmartScanner.autoCrop(item.rotatedImage);
-      }
-
-      if (result != null && mounted) {
-        setState(() {
-          item.image = result!;
-          item.cachedBytes = Uint8List.fromList(img.encodeJpg(result!, quality: 92));
-          item.rotation = 0;
-          item.heightMm = result!.height / result!.width * item.widthMm;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        // المحاولة الأخيرة: Dart fallback
-        final fallback = SmartScanner.autoCrop(item.rotatedImage);
-        if (fallback.width != item.image.width || fallback.height != item.image.height) {
-          setState(() {
-            item.image = fallback;
-            item.cachedBytes = Uint8List.fromList(img.encodeJpg(fallback, quality: 92));
-            item.rotation = 0;
-            item.heightMm = fallback.height / fallback.width * item.widthMm;
-          });
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('لم يتم اكتشاف مستند في الصورة'), backgroundColor: Colors.orange),
-          );
-        }
-      }
-    } finally {
-      try { File(inputPath).deleteSync(); } catch (_) {}
-      if (mounted) setState(() => _processing = false);
-    }
-  }
-
-  void _manualCrop() async {
-    if (_activeItem == null) return;
-    final r = _activeItem!.rotatedImage;
-    final result = await Navigator.push<img.Image>(context, MaterialPageRoute(builder: (_) => ManualCropScreen(image: r)));
-    if (result != null && mounted) {
-      setState(() {
-        _activeItem!.image = result;
-        _activeItem!.cachedBytes = Uint8List.fromList(img.encodeJpg(result, quality: 92));
-        _activeItem!.rotation = 0;
-        _activeItem!.heightMm = result.height / result.width * _activeItem!.widthMm;
-      });
-    }
-  }
-  void _print() async {
-    final pdf = pw.Document();
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, margin: pw.EdgeInsets.zero, build: (_) {
-      final ws = <pw.Widget>[];
-      for (final i in _items) {
-        final pi = i.rotatedImage;
-        ws.add(pw.Positioned(left: i.xMm * PdfPageFormat.mm, top: i.yMm * PdfPageFormat.mm,
-          child: pw.SizedBox(width: i.widthMm * PdfPageFormat.mm, height: i.heightMm * PdfPageFormat.mm,
-            child: pw.Image(pw.MemoryImage(Uint8List.fromList(img.encodeJpg(pi, quality: 95))), fit: pw.BoxFit.fill))));
-      }
-      return pw.Stack(children: List<pw.Widget>.from(ws));
-    }));
-    await Printing.layoutPdf(onLayout: (_) async => pdf.save());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('مكتب علاء الحديدي - الماسح الذكي', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-          Text('Telegram: @Oo_qp', style: TextStyle(fontSize: 9, color: Colors.white70)),
-        ]),
-        backgroundColor: const Color(0xFF0284C7), foregroundColor: Colors.white,
-        actions: [
-          IconButton(icon: const Icon(Icons.print, size: 18), tooltip: 'طباعة', onPressed: _print),
-          IconButton(icon: const Icon(Icons.add_a_photo, size: 18), onPressed: () => _addImages(ImageSource.camera)),
-          IconButton(icon: const Icon(Icons.photo_library, size: 18), onPressed: () => _addImages(ImageSource.gallery)),
-        ],
-      ),
-      body: LayoutBuilder(builder: (_, c) {
-        final tw = c.maxWidth, th = c.maxHeight;
-        final sw = tw * 0.19, cw = tw - sw, tbh = 46.0;
-        final ch = th - tbh;
-        final sc = min((cw - 12) / pwMm, (ch - 12) / phMm);
+  @override Widget build(BuildContext c) {
+    return Scaffold(appBar: AppBar(
+      title: const Text('مكتب علاء الحديدي - الماسح الذكي', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      backgroundColor: const Color(0xFF0284C7), foregroundColor: Colors.white,
+      actions: [IconButton(icon: const Icon(Icons.print, size: 18), tooltip: 'طباعة', onPressed: _prnt),
+        IconButton(icon: const Icon(Icons.add_a_photo, size: 18), onPressed: () => _addImgs(ImageSource.camera)),
+        IconButton(icon: const Icon(Icons.photo_library, size: 18), onPressed: () => _addImgs(ImageSource.gallery))]),
+      body: LayoutBuilder(builder: (_, cc) {
+        final sw = cc.maxWidth * 0.19, cw = cc.maxWidth - sw, tbh = 48.0;
+        final sc = min((cw - 20) / pwM, (cc.maxHeight - tbh - 20) / phM);
         return Column(children: [
-          Container(height: tbh, padding: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: const BoxDecoration(color: Color(0xFF1E293B), border: Border(bottom: BorderSide(color: Color(0xFF334155)))),
-            child: Row(children: [
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'docs', label: Text('مستمسكات', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))),
-                  ButtonSegment(value: 'photos', label: Text('صور معاملة', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (s) { if (s.isNotEmpty) setState(() => _mode = s.first); },
-                style: const ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap, visualDensity: VisualDensity.compact),
-              ),
-              const SizedBox(width: 8),
-              _tb('قص ذكي 🤖', Icons.auto_fix_high, const Color(0xFFF59E0B), _smartCrop, _processing),
-              _tb('قص يدوي', Icons.crop_free, const Color(0xFF06B6D4), _manualCrop, false),
-              _tb('ترتيب', Icons.auto_awesome, const Color(0xFF10B981), _align, false),
-              const Spacer(),
-              _tb('تدوير', Icons.rotate_right, const Color(0xFF94A3B8), _rotate, false),
-              _tb('نسخ', Icons.copy, const Color(0xFFA78BFA), _duplicate, false),
-            ])),
+          Container(height: tbh, padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: const BoxDecoration(color: Color(0xFF1E293B)),
+            child: Row(children: [const SizedBox(width: 4),
+              _tb('مستمسكات', _mode=='docs', Colors.blueGrey, ()=>setState(()=>_mode='docs')),
+              _tb('صور', _mode=='photos', Colors.blueGrey, ()=>setState(()=>_mode='photos')), const Spacer(),
+              _tb('قص تلقائي', false, const Color(0xFFF59E0B), _autoCrop),
+              _tb('قص يدوي', false, const Color(0xFF06B6D4), _manualCrop),
+              _tb('ترتيب', false, const Color(0xFF10B981), _aln),
+              _tb('تدوير', false, const Color(0xFF94A3B8), _rot),
+              _tb('نسخ', false, const Color(0xFFA78BFA), _dup)])),
           Expanded(child: Row(children: [
-            SizedBox(width: sw, child: Container(color: const Color(0xFFF1F5F9), padding: const EdgeInsets.all(5),
+            SizedBox(width: sw, child: Container(color: const Color(0xFFF1F5F9),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                Container(margin: const EdgeInsets.all(4), padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(color: const Color(0xFF0369A1), borderRadius: BorderRadius.circular(4)),
-                  child: const Text('القياسات (سم)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white))),
-                const SizedBox(height: 4),
+                  child: const Text('القياسات (سم)', textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white))),
                 if (_mode == 'docs') ...[
-                  _sz('بطاقة موحدة\n8.5 × 5.4', () => _resize(85, 54)),
-                  _sz('بطاقة سكن\n8.8 × 5.8', () => _resize(88, 58)),
-                  _sz('ورقة كاملة\nA4', () => _resize(210, 297), c: const Color(0xFF0F766E)),
-                ] else ...[
-                  _sz('معاملة\n3.6 × 4.5', () => _resize(36, 45, p: true)),
-                  _sz('مصغر\n2.5 × 3.4', () => _resize(25, 34, p: true)),
-                ],
+                  _sz('بطاقة موحدة', '8.5 × 5.4', ()=>_resz(85,54)), _sz('بطاقة سكن', '8.8 × 5.8', ()=>_resz(88,58)),
+                  _sz('ورقة كاملة A4', '21 × 29.7', ()=>_resz(210,297), clr: const Color(0xFF0F766E)) ] else ...[
+                  _sz('معاملة', '3.6 × 4.5', ()=>_resz(36,45,p:true)), _sz('مصغر', '2.5 × 3.4', ()=>_resz(25,34,p:true)) ],
                 const Spacer(),
-                if (_activeItem != null)
-                  SizedBox(height: 32, child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
-                    onPressed: () => setState(() { _items.remove(_activeItem); _activeItem = null; }),
-                    icon: const Icon(Icons.delete_outline, size: 14),
-                    label: const Text('حذف العنصر', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                  )),
-              ]),
-            )),
+                if (_sel!=null) Padding(padding: const EdgeInsets.all(4), child: SizedBox(height: 30, child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)), padding: const EdgeInsets.symmetric(horizontal: 6)),
+                  onPressed: ()=>setState((){_items.remove(_sel);_sel=null;}),
+                  icon: const Icon(Icons.delete_outline, size: 14), label: const Text('حذف', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))))),
+              ]))),
             Expanded(child: Container(color: const Color(0xFF1E293B),
-              child: Center(child: Container(width: pwMm * sc, height: phMm * sc,
-                decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 14, offset: const Offset(0, 4))]),
-                child: ClipRect(child: Stack(children: List.generate(_items.length, (i) {
-                  final it = _items[i];
-                  final act = _activeItem?.id == it.id;
-                  return Positioned(left: it.xMm * sc, top: it.yMm * sc, width: it.widthMm * sc, height: it.heightMm * sc,
-                    child: GestureDetector(
-                      onTap: () => setState(() => _activeItem = it),
-                      onPanUpdate: (d) => setState(() { it.xMm += d.delta.dx / sc; it.yMm += d.delta.dy / sc; }),
-                      child: Container(
-                        decoration: BoxDecoration(border: Border.all(color: act ? Colors.blue : (it.isPhotoStyle ? Colors.red.withOpacity(0.5) : Colors.transparent), width: act ? 2.5 : 1),
-                          boxShadow: act ? [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 6)] : null),
-                        child: Transform.rotate(angle: it.rotation * pi / 180, child: Image.memory(it.cachedBytes, fit: BoxFit.fill)),
-                      ),
-                    ),
-                  );
-                }))),
-              )),
-            )),
-          ])),
+              child: Center(child: Container(width: pwM * sc, height: phM * sc,
+                decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 12)]),
+                child: ClipRect(child: Stack(children: List.generate(_items.length, (i){ final it=_items[i]; final act=_sel?.id==it.id;
+                  return Positioned(left: it.xMm*sc, top: it.yMm*sc, width: it.wMm*sc, height: it.hMm*sc,
+                    child: GestureDetector(onTap:()=>setState(()=>_sel=it),
+                      onPanUpdate:(d)=>setState((){ it.xMm+=d.delta.dx/sc; it.yMm+=d.delta.dy/sc; }),
+                      child: Container(decoration: BoxDecoration(
+                        border: Border.all(color: act?Colors.blue:(it.photo?Colors.red.withOpacity(0.4):Colors.transparent), width: act?3:1),
+                        boxShadow: act?[BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8)]:null),
+                        child: Transform.rotate(angle: it.rot*pi/180, child: Image.memory(it.bytes, fit: BoxFit.fill))))); }))))),
+              ))),
+          ]))
         ]);
-      }),
-    );
+      }));
   }
 
-  Widget _tb(String l, IconData i, Color c, VoidCallback t, bool ld) {
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: TextButton(
-        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-        onPressed: ld ? null : t,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          ld ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Icon(i, size: 15, color: c),
-          const SizedBox(width: 3),
-          Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: ld ? Colors.white54 : Colors.white)),
-        ]),
-      ),
-    );
-  }
+  Widget _tb(String l, bool sel, Color clr, VoidCallback fn) => Padding(padding: const EdgeInsets.symmetric(horizontal:2),
+    child: Material(color: Colors.transparent, child: InkWell(onTap:_busy?null:fn, borderRadius: BorderRadius.circular(6),
+      child: Container(padding: const EdgeInsets.symmetric(horizontal:8,vertical:6),
+        decoration: BoxDecoration(color: sel?clr.withOpacity(0.25):Colors.transparent, borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: sel?clr:Colors.white24, width:1)),
+        child: Text(l, style: TextStyle(fontSize:10,fontWeight:FontWeight.w700,color:sel?clr:Colors.white))))));
 
-  Widget _sz(String l, VoidCallback t, {Color c = const Color(0xFF0369A1)}) {
-    return Padding(padding: const EdgeInsets.only(bottom: 3),
-      child: SizedBox(height: 34, child: ElevatedButton(
-        style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 2), minimumSize: const Size(0, 34),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-          backgroundColor: c.withOpacity(0.08), foregroundColor: c, side: BorderSide(color: c.withOpacity(0.3)), elevation: 0),
-        onPressed: t,
-        child: Text(l, textAlign: TextAlign.center, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: c, height: 1.2)),
-      )),
-    );
-  }
+  Widget _sz(String t, String sub, VoidCallback fn, {Color clr = const Color(0xFF0369A1)}) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal:4,vertical:2), child: SizedBox(height:38, child: ElevatedButton(
+      style: ElevatedButton.styleFrom(padding:EdgeInsets.zero,minimumSize:Size.zero,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        backgroundColor: clr.withOpacity(0.06), foregroundColor: clr, side: BorderSide(color: clr.withOpacity(0.35)), elevation:0),
+      onPressed:fn, child: Column(mainAxisAlignment:MainAxisAlignment.center, children:[
+        Text(t, style: TextStyle(fontSize:9,fontWeight:FontWeight.w700,color:clr)),
+        Text(sub, style: TextStyle(fontSize:7,fontWeight:FontWeight.w500,color:clr.withOpacity(0.7)))]))));
 }
 
-// ═══════════════════════════════════════════════════════
-// MANUAL CROP — قص يدوي محسّن
-// ═══════════════════════════════════════════════════════
-class ManualCropScreen extends StatefulWidget {
+// ════════════════════════════════════
+// شاشة القص اليدوي
+// ════════════════════════════════════
+class CropScreen extends StatefulWidget {
   final img.Image image;
-  const ManualCropScreen({super.key, required this.image});
-  @override
-  State<ManualCropScreen> createState() => _ManualCropScreenState();
+  const CropScreen({super.key, required this.image});
+  @override State<CropScreen> createState() => _CropScreenState();
 }
 
-class _ManualCropScreenState extends State<ManualCropScreen> {
-  late double _tlX, _tlY, _trX, _trY, _brX, _brY, _blX, _blY;
-  String _filter = 'soft';
-  late Uint8List _bytes;
+class _CropScreenState extends State<CropScreen> {
+  double _x1=0.05,_y1=0.05,_x2=0.95,_y2=0.05,_x3=0.95,_y3=0.95,_x4=0.05,_y4=0.95;
+  EnhanceMode _filt=EnhanceMode.none;
+  late Uint8List _disp;
+  @override void initState(){super.initState();_disp=Uint8List.fromList(ImageUtils.encodeJpg(widget.image,quality:90));}
 
-  @override
-  void initState() {
-    super.initState();
-    _tlX = 0.05; _tlY = 0.05; _trX = 0.95; _trY = 0.05;
-    _brX = 0.95; _brY = 0.95; _blX = 0.05; _blY = 0.95;
-    _bytes = Uint8List.fromList(img.encodeJpg(widget.image, quality: 82));
+  void _done(){
+    var res=ManualCrop.cropFromPoints(widget.image,_x1,_y1,_x2,_y2,_x3,_y3,_x4,_y4);
+    res=ImageEnhancer.apply(res,_filt);
+    Navigator.pop(context,res);
   }
+  void _reset()=>setState((){_x1=_y1=0.05;_x2=0.95;_y2=0.05;_x3=0.95;_y3=0.95;_x4=0.05;_y4=0.95;});
 
-  void _apply() {
-    final src = widget.image;
-    final xs = [(_tlX*src.width).round(), (_trX*src.width).round(), (_brX*src.width).round(), (_blX*src.width).round()];
-    final ys = [(_tlY*src.height).round(), (_trY*src.height).round(), (_brY*src.height).round(), (_blY*src.height).round()];
-    final mx = xs.reduce(min).clamp(0, src.width-1), xx = xs.reduce(max).clamp(1, src.width);
-    final my = ys.reduce(min).clamp(0, src.height-1), xy = ys.reduce(max).clamp(1, src.height);
-    var c = img.copyCrop(src, x: mx, y: my, width: max(10, xx-mx), height: max(10, xy-my));
-    if (_filter == 'soft') c = SmartScanner.softEnhance(c);
-    else if (_filter == 'bw') c = img.grayscale(c);
-    Navigator.pop(context, c);
-  }
+  @override Widget build(BuildContext c)=>Scaffold(backgroundColor:Colors.black,
+    body:SafeArea(child:Column(children:[
+      Container(height:48,padding:const EdgeInsets.symmetric(horizontal:12),color:const Color(0xFF111827),
+        child:Row(children:[
+          IconButton(icon:const Icon(Icons.close,color:Colors.white70,size:20),onPressed:()=>Navigator.pop(context)),
+          const Spacer(),
+          _cBtn('أصلي',_filt==EnhanceMode.none,()=>setState(()=>_filt=EnhanceMode.none)),
+          const SizedBox(width:6),_cBtn('تحسين',_filt==EnhanceMode.soft,()=>setState(()=>_filt=EnhanceMode.soft)),
+          const SizedBox(width:6),_cBtn('أبيض وأسود',_filt==EnhanceMode.bw,()=>setState(()=>_filt=EnhanceMode.bw)),
+          const SizedBox(width:16),
+          TextButton.icon(onPressed:_reset,icon:const Icon(Icons.refresh,size:16,color:Colors.orange),label:const Text('إعادة',style:TextStyle(fontSize:11,color:Colors.orange))),
+          const Spacer(),
+          FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xFF10B981),padding:const EdgeInsets.symmetric(horizontal:16,vertical:8)),
+            onPressed:_done,icon:const Icon(Icons.check,size:18),label:const Text('تطبيق',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold)))]))),
+      Expanded(child:LayoutBuilder(builder:(_,cc){final w=cc.maxWidth,h=cc.maxHeight;
+        return Stack(children:[
+          Center(child:Image.memory(_disp,fit:BoxFit.contain)),
+          IgnorePointer(child:CustomPaint(size:Size(w,h),painter:_Ovr(_x1*w,_y1*h,_x2*w,_y2*h,_x3*w,_y3*h,_x4*w,_y4*h))),
+          CustomPaint(size:Size(w,h),painter:_Ln([Offset(_x1*w,_y1*h),Offset(_x2*w,_y2*h),Offset(_x3*w,_y3*h),Offset(_x4*w,_y4*h)])),
+          _dot('↖',_x1,_y1,w,h,(dx,dy)=>setState((){_x1=dx;_y1=dy;})),
+          _dot('↗',_x2,_y2,w,h,(dx,dy)=>setState((){_x2=dx;_y2=dy;})),
+          _dot('↘',_x3,_y3,w,h,(dx,dy)=>setState((){_x3=dx;_y3=dy;})),
+          _dot('↙',_x4,_y4,w,h,(dx,dy)=>setState((){_x4=dx;_y4=dy;})),
+        ]);})),
+      Container(height:36,color:const Color(0xFF111827),
+        child:const Center(child:Text('اسحب الدوائر الزرقاء لتحديد منطقة القص',style:TextStyle(color:Colors.white54,fontSize:11))))])));
 
-  Widget _dot(double x, double y, double w, double h, void Function(double, double) s) {
-    return Positioned(left: x*w-22, top: y*h-22,
-      child: GestureDetector(behavior: HitTestBehavior.opaque,
-        onPanUpdate: (d) => setState(() => s((x+d.delta.dx/w).clamp(0.0,1.0), (y+d.delta.dy/h).clamp(0.0,1.0))),
-        child: Container(width: 44, height: 44,
-          decoration: BoxDecoration(color: const Color(0xFF2563EB), shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6)])),
-      ),
-    );
-  }
+  Widget _dot(String lbl,double x,double y,double w,double h,void Function(double,double) s)=>Positioned(left:x*w-26,top:y*h-26,
+    child:GestureDetector(behavior:HitTestBehavior.opaque,
+      onPanUpdate:(d)=>s((x+d.delta.dx/w).clamp(0.0,1.0),(y+d.delta.dy/h).clamp(0.0,1.0)),
+      child:Container(width:52,height:52,
+        decoration:BoxDecoration(color:const Color(0xFF2563EB),shape:BoxShape.circle,
+          border:Border.all(color:Colors.white,width:3.5),boxShadow:const [BoxShadow(color:Colors.black54,blurRadius:8,offset:Offset(0,2))]),
+        child:Center(child:Text(lbl,style:const TextStyle(color:Colors.white,fontSize:14,fontWeight:FontWeight.bold))))));
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(backgroundColor: const Color(0xFF0B1121),
-      appBar: AppBar(title: const Text('القص اليدوي', style: TextStyle(fontSize: 14)), centerTitle: true,
-        backgroundColor: Colors.black, foregroundColor: Colors.white,
-        actions: [Padding(padding: const EdgeInsets.only(right: 8), child: IconButton(icon: const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 30), onPressed: _apply))]),
-      body: Column(children: [
-        Container(color: const Color(0xFF1A1F2E), padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Text('الفلتر:  ', style: TextStyle(color: Colors.white70, fontSize: 11)),
-            _chip('أصلي', _filter=='original', () => setState(() => _filter='original')),
-            _chip('ناعم ✨', _filter=='soft', () => setState(() => _filter='soft')),
-            _chip('أبيض وأسود', _filter=='bw', () => setState(() => _filter='bw')),
-            const SizedBox(width: 8),
-            TextButton.icon(onPressed: () => setState(() { _tlX=_tlY=0.05; _trX=0.95; _trY=0.05; _brX=_brY=0.95; _blX=0.05; _blY=0.95; }),
-              icon: const Icon(Icons.refresh, size: 14, color: Colors.white60), label: const Text('إعادة', style: TextStyle(fontSize: 10, color: Colors.white60))),
-          ])),
-        Expanded(child: LayoutBuilder(builder: (_, c) {
-          final w = c.maxWidth, h = c.maxHeight;
-          return Stack(children: [
-            Center(child: Image.memory(_bytes, fit: BoxFit.contain)),
-            Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _Ovr(_tlX*w, _tlY*h, _trX*w, _trY*h, _brX*w, _brY*h, _blX*w, _blY*h)))),
-            CustomPaint(size: Size(w, h), painter: _Ln([Offset(_tlX*w, _tlY*h), Offset(_trX*w, _trY*h), Offset(_brX*w, _brY*h), Offset(_blX*w, _blY*h)])),
-            _dot(_tlX, _tlY, w, h, (dx,dy) { _tlX=dx; _tlY=dy; }), _dot(_trX, _trY, w, h, (dx,dy) { _trX=dx; _trY=dy; }),
-            _dot(_brX, _brY, w, h, (dx,dy) { _brX=dx; _brY=dy; }), _dot(_blX, _blY, w, h, (dx,dy) { _blX=dx; _blY=dy; }),
-          ]);
-        })),
-      ]),
-    );
-  }
-
-  Widget _chip(String l, bool sel, VoidCallback t) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: ChoiceChip(label: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: sel?Colors.white:Colors.white70)),
-      selected: sel, onSelected: (_) => t(), selectedColor: const Color(0xFF2563EB), backgroundColor: const Color(0xFF1E293B),
-      side: BorderSide.none, padding: const EdgeInsets.symmetric(horizontal: 4), visualDensity: VisualDensity.compact));
+  Widget _cBtn(String t,bool sel,VoidCallback fn)=>GestureDetector(onTap:fn,
+    child:Container(padding:const EdgeInsets.symmetric(horizontal:10,vertical:6),
+      decoration:BoxDecoration(color:sel?const Color(0xFF2563EB):const Color(0xFF1E293B),
+        borderRadius:BorderRadius.circular(20),border:Border.all(color:sel?Colors.transparent:Colors.white24)),
+      child:Text(t,style:TextStyle(color:Colors.white,fontSize:11,fontWeight:sel?FontWeight.bold:FontWeight.w500))));
 }
 
-class _Ovr extends CustomPainter {
+class _Ovr extends CustomPainter{
   final double x1,y1,x2,y2,x3,y3,x4,y4;
   _Ovr(this.x1,this.y1,this.x2,this.y2,this.x3,this.y3,this.x4,this.y4);
-  @override void paint(Canvas c, Size s) {
-    final o = Path()..addRect(Rect.fromLTWH(0,0,s.width,s.height));
-    final i = Path()..moveTo(x1,y1)..lineTo(x2,y2)..lineTo(x3,y3)..lineTo(x4,y4)..close();
-    c.drawPath(Path.combine(PathOperation.difference, o, i), Paint()..color = Colors.black.withOpacity(0.55));
+  @override void paint(Canvas c,Size s){
+    final o=Path()..addRect(Rect.fromLTWH(0,0,s.width,s.height));
+    final i=Path()..moveTo(x1,y1)..lineTo(x2,y2)..lineTo(x3,y3)..lineTo(x4,y4)..close();
+    c.drawPath(Path.combine(PathOperation.difference,o,i),Paint()..color=Colors.black.withOpacity(0.6));
+    c.drawPath(i,Paint()..color=const Color(0xFF22D3EE).withOpacity(0.3)..style=PaintingStyle.stroke..strokeWidth=3);
   }
-  @override bool shouldRepaint(_) => true;
+  @override bool shouldRepaint(_)=>true;
 }
 
-class _Ln extends CustomPainter {
+class _Ln extends CustomPainter{
   final List<Offset> p;
   _Ln(this.p);
-  @override void paint(Canvas c, Size s) {
-    final pt = Paint()..color = const Color(0xFF22D3EE)..strokeWidth = 2.5..style = PaintingStyle.stroke;
-    final ph = Path()..moveTo(p[0].dx,p[0].dy); for (int i=1;i<4;i++) ph.lineTo(p[i].dx,p[i].dy);
-    ph.close(); c.drawPath(ph, pt);
+  @override void paint(Canvas c,Size s){
+    final w=Paint()..color=Colors.white..strokeWidth=1.5..style=PaintingStyle.stroke;
+    final cy=Paint()..color=const Color(0xFF22D3EE)..strokeWidth=2.0..style=PaintingStyle.stroke;
+    for(int i=0;i<4;i++){final a=p[i],b=p[(i+1)%4];c.drawLine(a,b,w);c.drawLine(a,b,cy);}
   }
-  @override bool shouldRepaint(_) => true;
+  @override bool shouldRepaint(_)=>true;
 }
