@@ -195,24 +195,12 @@ class ManualCrop {
 /// Google ML Kit Document Scanner
 /// ═══════════════════════════════════════
 class GoogleScanner {
-  /// التحقق من توفر Google ML Kit على الجهاز
-  static Future<bool> isAvailable() async {
-    try {
-      return await DocumentScanner.isGooglePlayServicesAvailable();
-    } catch (_) {
-      return false;
-    }
-  }
-
   /// فتح ماسح Google الرسمي — يُرجع قائمة بمسارات الصور الممسوحة
   static Future<List<String>?> scan() async {
     try {
-      final available = await DocumentScanner.isGooglePlayServicesAvailable();
-      if (!available) return null;
-
       final scanner = DocumentScanner(
-        options: DocumentScannerOptions(
-          documentFormat: DocumentFormat.jpeg,
+        options: const DocumentScannerOptions(
+          documentFormats: {DocumentFormat.jpeg},
           mode: ScannerMode.filter,
           pageLimit: 10,
           isGalleryImport: true,
@@ -220,22 +208,10 @@ class GoogleScanner {
       );
 
       final result = await scanner.scanDocument();
-      if (result == null || result.images.isEmpty) return null;
+      scanner.close();
 
-      // نسخ الصور إلى ملفات مؤقتة
-      final paths = <String>[];
-      for (final img in result.images) {
-        final bytes = await img.filePath != null
-            ? await File(img.filePath!).readAsBytes()
-            : img.bytes;
-        if (bytes == null) continue;
-
-        final tmpPath = '${Directory.systemTemp.path}/google_scan_${DateTime.now().millisecondsSinceEpoch}_${paths.length}.jpg';
-        await File(tmpPath).writeAsBytes(bytes);
-        paths.add(tmpPath);
-      }
-
-      return paths.isNotEmpty ? paths : null;
+      if (result.images.isEmpty) return null;
+      return result.images;
     } catch (_) {
       return null;
     }
