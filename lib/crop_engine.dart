@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
 /// crop_engine.dart — محرك القص والتحسين المستقل
@@ -136,5 +137,9 @@ class ManualCrop {
 /// أدوات مساعدة
 class ImageUtils {
   static List<int> encodeJpg(img.Image src, {int quality = 92}) => img.encodeJpg(src, quality: quality);
-  static img.Image? decodeJpg(List<int> bytes) => img.decodeImage(bytes);
+  static img.Image? decodeJpg(dynamic bytes) {
+    if (bytes is Uint8List) return img.decodeImage(bytes);
+    if (bytes is List<int>) return img.decodeImage(Uint8List.fromList(bytes));
+    return null;
+  }
 }
