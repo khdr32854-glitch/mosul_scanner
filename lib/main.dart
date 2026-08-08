@@ -69,40 +69,40 @@ class _MainScreenState extends State<MainScreen> {
 
   /// فتح Google ML Kit Document Scanner
   void _googleScan() async {
-    final available = await GoogleScanner.isAvailable();
-    if (!available && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Google Scanner غير متوفر — استخدام الكاميرا العادية'), backgroundColor: Colors.blue, duration: Duration(seconds: 2)),
-      );
-      _addImgs(ImageSource.camera);
-      return;
-    }
-    if (!mounted) return;
-    final paths = await GoogleScanner.scan();
-    if (paths == null || paths.isEmpty) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إلغاء المسح'), backgroundColor: Colors.grey, duration: Duration(seconds: 1)),
-      );
-      return;
-    }
-    for (int i = 0; i < paths.length; i++) {
-      final raw = await File(paths[i]).readAsBytes();
-      final dec = ImageUtils.decodeBytes(raw);
-      if (dec == null) continue;
-      final enc = Uint8List.fromList(ImageUtils.encodeJpg(dec));
-      if (!mounted) return;
-      setState(() {
-        final item = DocItem(
-          id: 'gs_${DateTime.now().millisecondsSinceEpoch}$i',
-          image: dec, bytes: enc,
-          wMm: _mode == 'photos' ? 36 : 85,
-          hMm: _mode == 'photos' ? 45 : (dec.height / dec.width * 85),
-          xMm: mM + _items.length * 4, yMm: mM + _items.length * 4,
-          photo: _mode == 'photos',
+    try {
+      final paths = await GoogleScanner.scan();
+      if (paths == null || paths.isEmpty) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم إلغاء المسح'), backgroundColor: Colors.grey, duration: Duration(seconds: 1)),
         );
-        _items.add(item); _sel = item;
-      });
-      try { File(paths[i]).deleteSync(); } catch (_) {}
+        return;
+      }
+      for (int i = 0; i < paths.length; i++) {
+        final raw = await File(paths[i]).readAsBytes();
+        final dec = ImageUtils.decodeBytes(raw);
+        if (dec == null) continue;
+        final enc = Uint8List.fromList(ImageUtils.encodeJpg(dec));
+        if (!mounted) return;
+        setState(() {
+          final item = DocItem(
+            id: 'gs_${DateTime.now().millisecondsSinceEpoch}$i',
+            image: dec, bytes: enc,
+            wMm: _mode == 'photos' ? 36 : 85,
+            hMm: _mode == 'photos' ? 45 : (dec.height / dec.width * 85),
+            xMm: mM + _items.length * 4, yMm: mM + _items.length * 4,
+            photo: _mode == 'photos',
+          );
+          _items.add(item); _sel = item;
+        });
+      }
+    } catch (_) {
+      // Google Scanner غير متوفر — fallback إلى الكاميرا
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google Scanner غير متوفر — استخدام الكاميرا العادية'), backgroundColor: Colors.blue, duration: Duration(seconds: 2)),
+        );
+        _addImgs(ImageSource.camera);
+      }
     }
   }
 
@@ -293,12 +293,12 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Widget _tb(String l, bool sel, VoidCallback fn) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+  Widget _tb(String l, bool sel, [Color? clr, VoidCallback? fn]) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
     child: Material(color: Colors.transparent, child: InkWell(onTap: fn, borderRadius: BorderRadius.circular(6),
       child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(color: sel ? const Color(0xFF0284C7).withOpacity(0.25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6), border: Border.all(color: sel ? const Color(0xFF0284C7) : Colors.white24, width: 1)),
-        child: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: sel ? const Color(0xFF38BDF8) : Colors.white))))));
+        decoration: BoxDecoration(color: sel ? (clr ?? const Color(0xFF0284C7)).withOpacity(0.25) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6), border: Border.all(color: sel ? (clr ?? const Color(0xFF0284C7)) : Colors.white38, width: 1)),
+        child: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: sel ? (clr ?? const Color(0xFF38BDF8)) : Colors.white70))))));
 
   Widget _sz(String t, String sub, VoidCallback fn, {Color clr = const Color(0xFF0369A1)}) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), child: SizedBox(height: 38, child: ElevatedButton(
