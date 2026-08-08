@@ -28,11 +28,6 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Fix Code Errors Automatically
-        run: |
-          sed -i 's/black48/black54/g' lib/main.dart
-          sed -i 's/black40/black54/g' lib/main.dart
-
       - name: Build APK
         run: flutter build apk --release --no-tree-shake-icons
 
