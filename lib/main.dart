@@ -207,32 +207,39 @@ class _CropScreenState extends State<CropScreen> {
   }
   void _reset()=>setState((){_x1=_y1=0.05;_x2=0.95;_y2=0.05;_x3=0.95;_y3=0.95;_x4=0.05;_y4=0.95;});
 
-  @override Widget build(BuildContext c)=>Scaffold(backgroundColor:Colors.black,
-    body:SafeArea(child:Column(children:[
-      Container(height:48,padding:const EdgeInsets.symmetric(horizontal:12),color:const Color(0xFF111827),
-        child:Row(children:[
-          IconButton(icon:const Icon(Icons.close,color:Colors.white70,size:20),onPressed:()=>Navigator.pop(context)),
-          const Spacer(),
-          _cBtn('أصلي',_filt==EnhanceMode.none,()=>setState(()=>_filt=EnhanceMode.none)),
-          const SizedBox(width:6),_cBtn('تحسين',_filt==EnhanceMode.soft,()=>setState(()=>_filt=EnhanceMode.soft)),
-          const SizedBox(width:6),_cBtn('أبيض وأسود',_filt==EnhanceMode.bw,()=>setState(()=>_filt=EnhanceMode.bw)),
-          const SizedBox(width:16),
-          TextButton.icon(onPressed:_reset,icon:const Icon(Icons.refresh,size:16,color:Colors.orange),label:const Text('إعادة',style:TextStyle(fontSize:11,color:Colors.orange))),
-          const Spacer(),
-          FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xFF10B981),padding:const EdgeInsets.symmetric(horizontal:16,vertical:8)),
-            onPressed:_done,icon:const Icon(Icons.check,size:18),label:const Text('تطبيق',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold)))]))),
-      Expanded(child:LayoutBuilder(builder:(_,cc){final w=cc.maxWidth,h=cc.maxHeight;
-        return Stack(children:[
-          Center(child:Image.memory(_disp,fit:BoxFit.contain)),
-          IgnorePointer(child:CustomPaint(size:Size(w,h),painter:_Ovr(_x1*w,_y1*h,_x2*w,_y2*h,_x3*w,_y3*h,_x4*w,_y4*h))),
-          CustomPaint(size:Size(w,h),painter:_Ln([Offset(_x1*w,_y1*h),Offset(_x2*w,_y2*h),Offset(_x3*w,_y3*h),Offset(_x4*w,_y4*h)])),
-          _dot('↖',_x1,_y1,w,h,(dx,dy)=>setState((){_x1=dx;_y1=dy;})),
-          _dot('↗',_x2,_y2,w,h,(dx,dy)=>setState((){_x2=dx;_y2=dy;})),
-          _dot('↘',_x3,_y3,w,h,(dx,dy)=>setState((){_x3=dx;_y3=dy;})),
-          _dot('↙',_x4,_y4,w,h,(dx,dy)=>setState((){_x4=dx;_y4=dy;})),
-        ]);})),
-      Container(height:36,color:const Color(0xFF111827),
-        child:const Center(child:Text('اسحب الدوائر الزرقاء لتحديد منطقة القص',style:TextStyle(color:Colors.white54,fontSize:11))))])));
+  @override Widget build(BuildContext c){
+    return Scaffold(backgroundColor:Colors.black,
+      body:SafeArea(child:Column(children:[
+        Container(height:48,padding:const EdgeInsets.symmetric(horizontal:12),color:const Color(0xFF111827),
+          child:Row(children:[
+            IconButton(icon:const Icon(Icons.close,color:Colors.white70,size:20),onPressed:()=>Navigator.pop(context)),
+            const Spacer(),
+            _cBtn('أصلي',_filt==EnhanceMode.none,()=>setState(()=>_filt=EnhanceMode.none)),
+            const SizedBox(width:6),_cBtn('تحسين',_filt==EnhanceMode.soft,()=>setState(()=>_filt=EnhanceMode.soft)),
+            const SizedBox(width:6),_cBtn('أبيض وأسود',_filt==EnhanceMode.bw,()=>setState(()=>_filt=EnhanceMode.bw)),
+            const SizedBox(width:16),
+            TextButton.icon(onPressed:_reset,icon:const Icon(Icons.refresh,size:16,color:Colors.orange),label:const Text('إعادة',style:TextStyle(fontSize:11,color:Colors.orange))),
+            const Spacer(),
+            FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xFF10B981),padding:const EdgeInsets.symmetric(horizontal:16,vertical:8)),
+              onPressed:_done,icon:const Icon(Icons.check,size:18),label:const Text('تطبيق',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold)))]
+        )),
+        Expanded(child:LayoutBuilder(builder:(_,cc){
+          final w=cc.maxWidth,h=cc.maxHeight;
+          return Stack(children:[
+            Center(child:Image.memory(_disp,fit:BoxFit.contain)),
+            IgnorePointer(child:CustomPaint(size:Size(w,h),painter:_Ovr(_x1*w,_y1*h,_x2*w,_y2*h,_x3*w,_y3*h,_x4*w,_y4*h))),
+            CustomPaint(size:Size(w,h),painter:_Ln([Offset(_x1*w,_y1*h),Offset(_x2*w,_y2*h),Offset(_x3*w,_y3*h),Offset(_x4*w,_y4*h)])),
+            _dot('↖',_x1,_y1,w,h,(dx,dy)=>setState((){_x1=dx;_y1=dy;})),
+            _dot('↗',_x2,_y2,w,h,(dx,dy)=>setState((){_x2=dx;_y2=dy;})),
+            _dot('↘',_x3,_y3,w,h,(dx,dy)=>setState((){_x3=dx;_y3=dy;})),
+            _dot('↙',_x4,_y4,w,h,(dx,dy)=>setState((){_x4=dx;_y4=dy;})),
+          ]);
+        })),
+        Container(height:36,color:const Color(0xFF111827),
+          child:const Center(child:Text('اسحب الدوائر الزرقاء لتحديد منطقة القص',style:TextStyle(color:Colors.white54,fontSize:11))))
+      ]))
+    );
+  }
 
   Widget _dot(String lbl,double x,double y,double w,double h,void Function(double,double) s)=>Positioned(left:x*w-26,top:y*h-26,
     child:GestureDetector(behavior:HitTestBehavior.opaque,
