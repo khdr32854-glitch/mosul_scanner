@@ -29,7 +29,8 @@ class DocItem {
   double wMm, hMm, xMm, yMm;
   int rot;
   bool photo;
-  DocItem({required this.id, required this.image, required this.bytes, required this.wMm, required this.hMm, required this.xMm, required this.yMm, this.rot = 0, this.photo = false});
+  bool curvedCorners;
+  DocItem({required this.id, required this.image, required this.bytes, required this.wMm, required this.hMm, required this.xMm, required this.yMm, this.rot = 0, this.photo = false, this.curvedCorners = false});
 
   img.Image get rotated {
     if (rot % 360 == 0) return image;
@@ -134,8 +135,8 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _resz(double w, double h, {bool p = false}) {
-    if (_sel != null) setState(() { _sel!.wMm = w; _sel!.hMm = h; _sel!.photo = p; });
+  void _resz(double w, double h, {bool p = false, bool curved = false}) {
+    if (_sel != null) setState(() { _sel!.wMm = w; _sel!.hMm = h; _sel!.photo = p; _sel!.curvedCorners = curved; });
   }
 
   void _rot() { if (_sel != null) setState(() => _sel!.applyRot()); }
@@ -149,7 +150,7 @@ class _MainScreenState extends State<MainScreen> {
         image: img.copyResize(s.image, width: s.image.width),
         bytes: Uint8List.fromList(s.bytes),
         wMm: s.wMm, hMm: s.hMm, xMm: s.xMm + 5, yMm: s.yMm + 5,
-        rot: s.rot, photo: s.photo,
+        rot: s.rot, photo: s.photo, curvedCorners: s.curvedCorners,
       ));
       _sel = _items.last;
     });
@@ -244,9 +245,9 @@ class _MainScreenState extends State<MainScreen> {
                   child: const Text('القياسات (سم)', textAlign: TextAlign.center,
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white))),
                 if (_mode == 'docs') ...[
-                  _sz('بطاقة موحدة', '8.5 × 5.4', () => _resz(85, 54)),
-                  _sz('بطاقة سكن', '8.8 × 5.8', () => _resz(88, 58)),
-                  _sz('ورقة كاملة A4', '21 × 29.7', () => _resz(210, 297), clr: const Color(0xFF0F766E)),
+                  _sz('بطاقة موحدة', '8.5 × 5.4', () => _resz(85, 54, curved: true)),
+                  _sz('بطاقة سكن', '8.8 × 5.8', () => _resz(88, 58, curved: true)),
+                  _sz('ورقة كاملة A4', '21 × 29.7', () => _resz(210, 297, curved: false), clr: const Color(0xFF0F766E)),
                 ] else ...[
                   _sz('معاملة', '3.6 × 4.5', () => _resz(36, 45, p: true)),
                   _sz('مصغر', '2.5 × 3.4', () => _resz(25, 34, p: true)),
@@ -277,6 +278,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildItem(DocItem it, double sc) {
     final act = _sel?.id == it.id;
+    final cr = it.curvedCorners ? BorderRadius.circular(3.5 * sc) : BorderRadius.zero;
     return Positioned(
       left: it.xMm * sc, top: it.yMm * sc, width: it.wMm * sc, height: it.hMm * sc,
       child: GestureDetector(
@@ -285,9 +287,13 @@ class _MainScreenState extends State<MainScreen> {
         onPanUpdate: (d) => setState(() { it.xMm += d.delta.dx / sc; it.yMm += d.delta.dy / sc; }),
         child: Container(
           decoration: BoxDecoration(
+            borderRadius: cr,
             border: Border.all(color: act ? Colors.blue : (it.photo ? Colors.red.withOpacity(0.4) : Colors.transparent), width: act ? 3 : 1),
             boxShadow: act ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8)] : null),
-          child: Transform.rotate(angle: it.rot * pi / 180, child: Image.memory(it.bytes, fit: BoxFit.fill)),
+          child: ClipRRect(
+            borderRadius: cr,
+            child: Transform.rotate(angle: it.rot * pi / 180, child: Image.memory(it.bytes, fit: BoxFit.fill)),
+          ),
         ),
       ),
     );
@@ -311,7 +317,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ═══════════════════════════════════════
-// شاشة القص اليدوي — خفيفة وسريعة
+// شاشة القص اليدوي — سريعة مثل الموبايل
 // ═══════════════════════════════════════
 class CropScreen extends StatefulWidget {
   final img.Image image;
@@ -326,6 +332,8 @@ class _CropScreenState extends State<CropScreen> {
   double _x4 = 0.05, _y4 = 0.95;
   EnhanceMode _filt = EnhanceMode.soft;
   late Uint8List _disp;
+  double _imgW = 1, _imgH = 1;
+  double _imgL = 0, _imgT = 0;
 
   @override
   void initState() {
@@ -368,59 +376,46 @@ class _CropScreenState extends State<CropScreen> {
         ],
       ),
       body: LayoutBuilder(builder: (_, cc) {
-        final w = cc.maxWidth, h = cc.maxHeight;
-        return Stack(children: [
-          // الصورة
-          Center(child: Image.memory(_disp, fit: BoxFit.contain)),
-          // التراكب الداكن + خطوط القص — نستخدم Stack بدل CustomPaint للسرعة
-          ..._buildOverlay(w, h),
-          // نقاط السحب
-          _dot(_x1, _y1, w, h, (dx, dy) => setState(() { _x1 = dx; _y1 = dy; })),
-          _dot(_x2, _y2, w, h, (dx, dy) => setState(() { _x2 = dx; _y2 = dy; })),
-          _dot(_x3, _y3, w, h, (dx, dy) => setState(() { _x3 = dx; _y3 = dy; })),
-          _dot(_x4, _y4, w, h, (dx, dy) => setState(() { _x4 = dx; _y4 = dy; })),
-        ]);
+        final cw = cc.maxWidth, ch = cc.maxHeight;
+        // حساب موضع وحجم الصورة (BoxFit.contain)
+        final iw = widget.image.width.toDouble(), ih = widget.image.height.toDouble();
+        final sc2 = min(cw / iw, ch / ih);
+        _imgW = iw * sc2; _imgH = ih * sc2;
+        _imgL = (cw - _imgW) / 2; _imgT = (ch - _imgH) / 2;
+
+        return GestureDetector(
+          onPanUpdate: (_) {}, // منع السحب العرضي للـ scaffold
+          child: Stack(children: [
+            // الصورة
+            Positioned(left: _imgL, top: _imgT, width: _imgW, height: _imgH,
+              child: Image.memory(_disp, fit: BoxFit.fill)),
+            // التراكب الداكن الخارجي + خطوط باستخدام CustomPaint واحد خفيف
+            Positioned.fill(child: CustomPaint(painter: _CropOverlayPainter(
+              x1: _imgL + _x1 * _imgW, y1: _imgT + _y1 * _imgH,
+              x2: _imgL + _x2 * _imgW, y2: _imgT + _y2 * _imgH,
+              x3: _imgL + _x3 * _imgW, y3: _imgT + _y3 * _imgH,
+              x4: _imgL + _x4 * _imgW, y4: _imgT + _y4 * _imgH,
+              cw: cw, ch: ch,
+            ))),
+            // نقاط السحب
+            _dot(_x1, _y1, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x1 = dx; _y1 = dy; })),
+            _dot(_x2, _y2, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x2 = dx; _y2 = dy; })),
+            _dot(_x3, _y3, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x3 = dx; _y3 = dy; })),
+            _dot(_x4, _y4, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x4 = dx; _y4 = dy; })),
+          ]),
+        );
       }),
     );
   }
 
-  List<Widget> _buildOverlay(double w, double h) {
-    // حساب المنطقة الداخلية
-    final left = min(min(_x1, _x4) * w, min(_x2, _x3) * w);
-    final top = min(min(_y1, _y2) * h, min(_y3, _y4) * h);
-    final right = max(max(_x1, _x4) * w, max(_x2, _x3) * w);
-    final bottom = max(max(_y1, _y2) * h, max(_y3, _y4) * h);
-
-    return [
-      // أعلى
-      Positioned(left: 0, top: 0, width: w, height: top.clamp(0, h),
-        child: Container(color: Colors.black54)),
-      // أسفل
-      Positioned(left: 0, top: bottom.clamp(0, h), width: w, height: (h - bottom).clamp(0, h),
-        child: Container(color: Colors.black54)),
-      // يسار
-      Positioned(left: 0, top: top.clamp(0, h), width: left.clamp(0, w), height: (bottom - top).clamp(0, h),
-        child: Container(color: Colors.black54)),
-      // يمين
-      Positioned(left: right.clamp(0, w), top: top.clamp(0, h), width: (w - right).clamp(0, w), height: (bottom - top).clamp(0, h),
-        child: Container(color: Colors.black54)),
-      // إطار مضيء حول منطقة القص
-      Positioned(left: left.clamp(0, w) - 1, top: top.clamp(0, h) - 1,
-        width: (right - left).clamp(0, w) + 2, height: (bottom - top).clamp(0, h) + 2,
-        child: IgnorePointer(child: Container(
-          decoration: BoxDecoration(border: Border.all(color: const Color(0xFF22D3EE), width: 2)),
-        ))),
-    ];
-  }
-
-  Widget _dot(double x, double y, double w, double h, void Function(double, double) setXY) {
+  Widget _dot(double rx, double ry, double cw, double ch, double il, double it, double iw, double ih, void Function(double, double) setXY) {
     return Positioned(
-      left: x * w - 28, top: y * h - 28,
+      left: il + rx * iw - 28, top: it + ry * ih - 28,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (d) => setXY(
-          (x + d.delta.dx / w).clamp(0.0, 1.0),
-          (y + d.delta.dy / h).clamp(0.0, 1.0),
+          ((il + rx * iw + d.delta.dx - il) / iw).clamp(0.0, 1.0),
+          ((it + ry * ih + d.delta.dy - it) / ih).clamp(0.0, 1.0),
         ),
         child: Container(width: 56, height: 56,
           decoration: BoxDecoration(
@@ -436,12 +431,36 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   Widget _chip(String t, bool sel, VoidCallback fn) {
-    return GestureDetector(
-      onTap: fn,
+    return GestureDetector(onTap: fn,
       child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(20), border: Border.all(color: sel ? Colors.transparent : Colors.white24)),
         child: Text(t, style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: sel ? FontWeight.bold : FontWeight.w500))),
     );
   }
+}
+
+/// CustomPainter سريع — يرسم التراكب والخطوط في طلقة واحدة
+class _CropOverlayPainter extends CustomPainter {
+  final double x1, y1, x2, y2, x3, y3, x4, y4;
+  final double cw, ch;
+  _CropOverlayPainter({required this.x1, required this.y1, required this.x2, required this.y2, required this.x3, required this.y3, required this.x4, required this.y4, required this.cw, required this.ch});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dark = Paint()..color = Colors.black54;
+    final path = Path()..addRect(Rect.fromLTWH(0, 0, cw, ch));
+    final cropPath = Path()
+      ..moveTo(x1, y1)..lineTo(x2, y2)..lineTo(x3, y3)..lineTo(x4, y4)..close();
+    // المنطقة الخارجية
+    path.fillType = PathFillType.evenOdd;
+    path.addPath(cropPath, Offset.zero);
+    canvas.drawPath(path, dark);
+    // الخطوط المضيئة
+    final line = Paint()..color = const Color(0xFF22D3EE)..strokeWidth = 2.5..style = PaintingStyle.stroke;
+    canvas.drawPath(cropPath, line);
+  }
+
+  @override
+  bool shouldRepaint(_CropOverlayPainter old) => old.x1 != x1 || old.y1 != y1 || old.x2 != x2 || old.y2 != y2 || old.x3 != x3 || old.y3 != y3 || old.x4 != x4 || old.y4 != y4;
 }
