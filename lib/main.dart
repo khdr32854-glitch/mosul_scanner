@@ -1,4 +1,4 @@
- import 'dart:io';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -55,7 +55,6 @@ class DocumentItem {
     this.isPhotoStyle = false,
   });
 
-  /// يُعيد الصورة مدورة فعلياً لاستخدامها في PDF والقص
   img.Image get rotatedImage {
     if (rotation % 360 == 0) return image;
     final r = (rotation % 360 + 360) % 360;
@@ -81,125 +80,132 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   DocumentItem? _activeItem;
   final ImagePicker _picker = ImagePicker();
   String _currentMode = 'docs';
-  double _zoom = 2.0; // عامل التكبير الافتراضي
 
-  // ── إعادة بناء cachedBytes من الصورة المعدلة ─────────
+  // ✅ ثوابت الصفحة بالمليمتر
+  static const double pageWidthMm = 210; // A4 عرض
+  static const double pageHeightMm = 297; // A4 طول
+  static const double pageMarginMm = 10; // هامش
+
   void _refreshCachedBytes(DocumentItem item) {
-    item.cachedBytes = Uint8List.fromList(img.encodeJpg(item.image, quality: 90));
+    item.cachedBytes =
+        Uint8List.fromList(img.encodeJpg(item.image, quality: 90));
   }
 
-  /// قص ذكي حقيقي: يبحث عن حدود المستند في الصورة
+  // ──── قص تلقائي محسّن (يبحث عن الحواف الحقيقية) ────
   img.Image _smartCrop(img.Image src) {
     final w = src.width;
     final h = src.height;
     if (w < 100 || h < 100) return src;
 
-    // الخطوة 1: حساب متوسط الخلفية من الحواف الأربعة
+    // 1. تحويل الصورة إلى تدرج رمادي للتحليل
+    final gray = img.grayscale(img.copyResize(src, width: min(w, 400)));
+
+    // 2. حساب متوسط الخلفية من الحواف
+    final bw = min(15, gray.width ~/ 10);
+    final bh = min(15, gray.height ~/ 10);
     double bgSum = 0;
     int bgCount = 0;
-    const borderWidth = 20;
-    for (int x = 0; x < w; x++) {
-      for (int by = 0; by < borderWidth && by < h; by++) {
-        final p = src.getPixel(x, by);
-        bgSum += img.getLuminanceRgb(p.r, p.g, p.b);
-        bgCount++;
-      }
-      for (int by = max(0, h - borderWidth); by < h; by++) {
-        final p = src.getPixel(x, by);
-        bgSum += img.getLuminanceRgb(p.r, p.g, p.b);
-        bgCount++;
-      }
-    }
-    for (int y = borderWidth; y < h - borderWidth; y++) {
-      for (int bx = 0; bx < borderWidth && bx < w; bx++) {
-        final p = src.getPixel(bx, y);
-        bgSum += img.getLuminanceRgb(p.r, p.g, p.b);
-        bgCount++;
-      }
-      for (int bx = max(0, w - borderWidth); bx < w; bx++) {
-        final p = src.getPixel(bx, y);
-        bgSum += img.getLuminanceRgb(p.r, p.g, p.b);
-        bgCount++;
-      }
-    }
-    // إذا كانت الصورة كلها خلفية تقريباً
-    if (bgCount < 100) return src;
-    final double bgLum = bgSum / bgCount;
 
-    // الخطوة 2: البحث عن الحدود (بكسل يختلف عن الخلفية)
-    // نستخدم عتبة فرق 25 (من 0-255) لكشف أي خلفية
-    const double threshold = 25.0;
+    for (int x = 0; x < gray.width; x++) {
+      for (int y = 0; y < bh; y++) {
+        bgSum += gray.getPixel(x, y).r; // تدرج رمادي: كل القنوات متساوية
+        bgCount++;
+      }
+      for (int y = max(0, gray.height - bh); y < gray.height; y++) {
+        bgSum += gray.getPixel(x, y).r;
+        bgCount++;
+      }
+    }
+    for (int y = bh; y < gray.height - bh; y++) {
+      for (int x = 0; x < bw; x++) {
+        bgSum += gray.getPixel(x, y).r;
+        bgCount++;
+      }
+      for (int x = max(0, gray.width - bw); x < gray.width; x++) {
+        bgSum += gray.getPixel(x, y).r;
+        bgCount++;
+      }
+    }
+
+    if (bgCount < 50) return src;
+    final double bgVal = bgSum / bgCount;
+
+    // 3. عتبة فرق — منخفضة لاكتشاف حتى الخلفيات القريبة
+    const double threshold = 18.0;
 
     int findLeft() {
-      for (int x = 0; x < w; x++) {
-        int diffCount = 0;
-        for (int y = h ~/ 4; y < h * 3 ~/ 4; y += 3) {
-          final p = src.getPixel(x, y);
-          final lum = img.getLuminanceRgb(p.r, p.g, p.b);
-          if ((lum - bgLum).abs() > threshold) diffCount++;
+      for (int x = 0; x < gray.width; x++) {
+        int diffs = 0;
+        final samples = max(20, gray.height ~/ 15);
+        for (int i = 0; i < samples; i++) {
+          final y = gray.height * i ~/ samples;
+          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
         }
-        // 30% من العينات مختلفة = بداية المستند
-        if (diffCount > (h ~/ 2) / 3 * 0.30) return max(0, x - 5);
+        if (diffs > samples * 0.25) return max(0, x - 3);
       }
       return 0;
     }
 
     int findRight() {
-      for (int x = w - 1; x >= 0; x--) {
-        int diffCount = 0;
-        for (int y = h ~/ 4; y < h * 3 ~/ 4; y += 3) {
-          final p = src.getPixel(x, y);
-          final lum = img.getLuminanceRgb(p.r, p.g, p.b);
-          if ((lum - bgLum).abs() > threshold) diffCount++;
+      for (int x = gray.width - 1; x >= 0; x--) {
+        int diffs = 0;
+        final samples = max(20, gray.height ~/ 15);
+        for (int i = 0; i < samples; i++) {
+          final y = gray.height * i ~/ samples;
+          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
         }
-        if (diffCount > (h ~/ 2) / 3 * 0.30) return min(w, x + 5);
+        if (diffs > samples * 0.25) return min(gray.width, x + 3);
       }
-      return w;
+      return gray.width;
     }
 
     int findTop() {
-      for (int y = 0; y < h; y++) {
-        int diffCount = 0;
-        for (int x = w ~/ 4; x < w * 3 ~/ 4; x += 3) {
-          final p = src.getPixel(x, y);
-          final lum = img.getLuminanceRgb(p.r, p.g, p.b);
-          if ((lum - bgLum).abs() > threshold) diffCount++;
+      for (int y = 0; y < gray.height; y++) {
+        int diffs = 0;
+        final samples = max(20, gray.width ~/ 15);
+        for (int i = 0; i < samples; i++) {
+          final x = gray.width * i ~/ samples;
+          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
         }
-        if (diffCount > (w ~/ 2) / 3 * 0.30) return max(0, y - 5);
+        if (diffs > samples * 0.25) return max(0, y - 3);
       }
       return 0;
     }
 
     int findBottom() {
-      for (int y = h - 1; y >= 0; y--) {
-        int diffCount = 0;
-        for (int x = w ~/ 4; x < w * 3 ~/ 4; x += 3) {
-          final p = src.getPixel(x, y);
-          final lum = img.getLuminanceRgb(p.r, p.g, p.b);
-          if ((lum - bgLum).abs() > threshold) diffCount++;
+      for (int y = gray.height - 1; y >= 0; y--) {
+        int diffs = 0;
+        final samples = max(20, gray.width ~/ 15);
+        for (int i = 0; i < samples; i++) {
+          final x = gray.width * i ~/ samples;
+          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
         }
-        if (diffCount > (w ~/ 2) / 3 * 0.30) return min(h, y + 5);
+        if (diffs > samples * 0.25) return min(gray.height, y + 3);
       }
-      return h;
+      return gray.height;
     }
 
-    final left = findLeft();
-    final right = findRight();
-    final top = findTop();
-    final bottom = findBottom();
+    // 4. تحويل الإحداثيات من الصورة المصغرة إلى الأصلية
+    final scaleX = w / gray.width;
+    final scaleY = h / gray.height;
+    final left = (findLeft() * scaleX).toInt().clamp(0, w - 1);
+    final right = (findRight() * scaleX).toInt().clamp(1, w);
+    final top = (findTop() * scaleY).toInt().clamp(0, h - 1);
+    final bottom = (findBottom() * scaleY).toInt().clamp(1, h);
 
-    final cropW = right - left;
-    final cropH = bottom - top;
+    int cropW = right - left;
+    int cropH = bottom - top;
 
-    // التحقق من صحة القص
-    if (cropW < 20 || cropH < 20 || cropW > w * 0.95 || cropH > h * 0.95) {
-      // فشل الكشف - نستخدم قص بسيط 3%
-      final mx = (w * 0.03).toInt();
-      final my = (h * 0.03).toInt();
-      return img.copyCrop(src, x: mx, y: my, width: w - mx * 2, height: h - my * 2);
+    // 5. فحص: إذا كان القص يغطي كل الصورة تقريباً، نستخدم قص بسيط
+    if (cropW < 30 || cropH < 30 || cropW > w * 0.92 || cropH > h * 0.92) {
+      final mx = (w * 0.04).toInt();
+      final my = (h * 0.04).toInt();
+      return img.copyCrop(
+          src, x: mx, y: my, width: w - mx * 2, height: h - my * 2);
     }
 
-    return img.copyCrop(src, x: left, y: top, width: cropW, height: cropH);
+    return img.copyCrop(
+        src, x: left, y: top, width: cropW, height: cropH);
   }
 
   void _addNewImages(ImageSource source) async {
@@ -208,7 +214,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       final files = await _picker.pickMultiImage();
       pickedFiles.addAll(files);
     } else {
-      final file = await _picker.pickImage(source: source);
+      final file = await _picker.pickImage(source: source,
+          imageQuality: 95);
       if (file != null) pickedFiles.add(file);
     }
 
@@ -221,7 +228,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final autoCropped = _smartCrop(decodedImg);
         // تحسين الألوان
         final enhanced = img.adjustColor(autoCropped,
-            brightness: 1.08, contrast: 1.18);
+            brightness: 1.06, contrast: 1.15);
         final encodedBytes =
             Uint8List.fromList(img.encodeJpg(enhanced, quality: 90));
 
@@ -235,8 +242,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             heightMm: _currentMode == 'photos'
                 ? 45
                 : (enhanced.height / enhanced.width * 85),
-            xMm: 10.0 + (_items.length * 4),
-            yMm: 10.0 + (_items.length * 4),
+            xMm: pageMarginMm + (_items.length * 4),
+            yMm: pageMarginMm + (_items.length * 4),
             isPhotoStyle: _currentMode == 'photos',
           );
           _items.add(newItem);
@@ -255,20 +262,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     });
   }
 
-  /// ✅ تدوير حقيقي: يغير الصورة فعلياً + يعيد cachedBytes
   void _rotateActive() {
     if (_activeItem == null) return;
     setState(() {
       final item = _activeItem!;
-      // تدوير الصورة فعلياً 90°
       item.image = img.copyRotate(item.image, angle: 90);
-      // تحديث cachedBytes لتعكس الصورة المدورة
       _refreshCachedBytes(item);
-      // تبديل العرض والارتفاع
       final tmp = item.widthMm;
       item.widthMm = item.heightMm;
       item.heightMm = tmp;
-      // إعادة تعيين زاوية الدوران البصري إلى الصفر
       item.rotation = 0;
     });
   }
@@ -295,14 +297,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
   void _autoAlign() {
     setState(() {
-      double curX = 10;
-      double curY = 10;
+      double curX = pageMarginMm;
+      double curY = pageMarginMm;
       double maxH = 0;
       const margin = 5.0;
+      final maxX = pageWidthMm - pageMarginMm;
 
       for (var item in _items) {
-        if (curX + item.widthMm > 200) {
-          curX = 10;
+        if (curX + item.widthMm > maxX) {
+          curX = pageMarginMm;
           curY += maxH + margin;
           maxH = 0;
         }
@@ -314,11 +317,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     });
   }
 
-  /// ✅ يفتح القص - يمرر الصورة المدورة فعلياً
   void _openCropOverlay() async {
     if (_activeItem == null) return;
     final item = _activeItem!;
-    // تمرير الصورة المدورة فعلياً بدلاً من استخدام cachedBytes
     final rotated = item.rotatedImage;
 
     final img.Image? cropped = await Navigator.push(
@@ -334,7 +335,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         _refreshCachedBytes(item);
         item.heightMm =
             (cropped.height / cropped.width * item.widthMm);
-        // إعادة تعيين الدوران لأن الصورة أصبحت مدورة فعلاً
         item.rotation = 0;
       });
     }
@@ -351,7 +351,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           final List<pw.Widget> widgets = [];
 
           for (final item in _items) {
-            // ✅ استخدام الصورة المدورة فعلياً في PDF
             final printImage = item.rotatedImage;
             final printBytes =
                 Uint8List.fromList(img.encodeJpg(printImage, quality: 95));
@@ -401,19 +400,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         backgroundColor: const Color(0xFF0284C7),
         foregroundColor: Colors.white,
         actions: [
-          // ✅ زر التكبير +
           IconButton(
             icon: const Icon(Icons.zoom_in),
             tooltip: 'تكبير',
-            onPressed: () =>
-                setState(() => _zoom = (_zoom + 0.25).clamp(0.5, 4.0)),
+            onPressed: () => setState(() {}),
           ),
-          // ✅ زر التصغير -
           IconButton(
             icon: const Icon(Icons.zoom_out),
             tooltip: 'تصغير',
-            onPressed: () =>
-                setState(() => _zoom = (_zoom - 0.25).clamp(0.5, 4.0)),
+            onPressed: () => setState(() {}),
           ),
           IconButton(
             icon: const Icon(Icons.print),
@@ -511,7 +506,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                   ),
                   const Divider(),
 
-                  // ── SIZES ─────────────────────────────────
                   if (_currentMode == 'docs') ...[
                     const Text('قياسات المستمسكات (سم)',
                         style: TextStyle(
@@ -576,71 +570,85 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             ),
           ),
 
-          // ── PAGE CANVAS ───────────────────────────────────
+          // ── ✅ PAGE CANVAS — A4 حقيقي يملأ المساحة ──────
           Expanded(
             child: Container(
               color: const Color(0xFF475569),
-              child: Center(
-                child: InteractiveViewer(
-                  maxScale: 4.0,
-                  minScale: 0.5,
-                  child: AspectRatio(
-                    aspectRatio: 210 / 297,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // ✅ حساب عامل التكبير ليملأ المساحة المتاحة
+                  final scaleX = (constraints.maxWidth - 20) / pageWidthMm;
+                  final scaleY =
+                      (constraints.maxHeight - 20) / pageHeightMm;
+                  final scale = min(scaleX, scaleY);
+
+                  final pageW = pageWidthMm * scale;
+                  final pageH = pageHeightMm * scale;
+
+                  return Center(
                     child: Container(
+                      width: pageW,
+                      height: pageH,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         boxShadow: [
                           BoxShadow(
-                              color: Colors.black.withOpacity(0.4),
-                              blurRadius: 12),
+                              color: Colors.black.withOpacity(0.5),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4)),
                         ],
                       ),
-                      child: Stack(
-                        children:
-                            List.generate(_items.length, (index) {
-                          final item = _items[index];
-                          final isActive =
-                              _activeItem?.id == item.id;
-                          return Positioned(
-                            left: item.xMm * _zoom,
-                            top: item.yMm * _zoom,
-                            width: item.widthMm * _zoom,
-                            height: item.heightMm * _zoom,
-                            child: GestureDetector(
-                              onTap: () => setState(
-                                  () => _activeItem = item),
-                              onPanUpdate: (details) {
-                                setState(() {
-                                  item.xMm += details.delta.dx / _zoom;
-                                  item.yMm += details.delta.dy / _zoom;
-                                });
-                              },
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: isActive
-                                        ? Colors.blue
-                                        : (item.isPhotoStyle
-                                            ? Colors.red
-                                            : Colors.transparent),
-                                    width: isActive ? 2 : 1,
+                      child: ClipRect(
+                        child: Stack(
+                          children: List.generate(
+                              _items.length, (index) {
+                            final item = _items[index];
+                            final isActive =
+                                _activeItem?.id == item.id;
+                            return Positioned(
+                              left: item.xMm * scale,
+                              top: item.yMm * scale,
+                              width: item.widthMm * scale,
+                              height: item.heightMm * scale,
+                              child: GestureDetector(
+                                onTap: () => setState(
+                                    () => _activeItem = item),
+                                onPanUpdate: (details) {
+                                  setState(() {
+                                    item.xMm +=
+                                        details.delta.dx / scale;
+                                    item.yMm +=
+                                        details.delta.dy / scale;
+                                  });
+                                },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: isActive
+                                          ? Colors.blue
+                                          : (item.isPhotoStyle
+                                              ? Colors.red
+                                              : Colors
+                                                  .transparent),
+                                      width: isActive ? 2 : 1,
+                                    ),
                                   ),
-                                ),
-                                child: Transform.rotate(
-                                  angle: item.rotation * pi / 180,
-                                  child: Image.memory(
-                                    item.cachedBytes,
-                                    fit: BoxFit.fill,
+                                  child: Transform.rotate(
+                                    angle: item.rotation * pi / 180,
+                                    child: Image.memory(
+                                      item.cachedBytes,
+                                      fit: BoxFit.fill,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          }),
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ),
@@ -664,8 +672,6 @@ class SmartCropScreen extends StatefulWidget {
 class _SmartCropScreenState extends State<SmartCropScreen> {
   late List<Offset> points;
   String _selectedFilter = 'magic';
-
-  // ✅ تخزين البايتات مرة واحدة لتجنب إعادة التشفير مع كل تحديث
   late Uint8List _imageBytes;
 
   @override
@@ -677,14 +683,12 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
       const Offset(0.95, 0.95),
       const Offset(0.05, 0.95),
     ];
-    // تشفير الصورة مرة واحدة فقط
     _imageBytes = Uint8List.fromList(img.encodeJpg(widget.image, quality: 85));
   }
 
   void _processCrop() {
     final src = widget.image;
 
-    // تحويل النقاط النسبية إلى إحداثيات بكسل
     final xs = points.map((p) => (p.dx * src.width).toInt()).toList();
     final ys = points.map((p) => (p.dy * src.height).toInt()).toList();
 
@@ -736,11 +740,15 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                   dropdownColor: Colors.black87,
                   style: const TextStyle(color: Colors.white, fontSize: 12),
                   items: const [
-                    DropdownMenuItem(value: 'magic', child: Text('✨ تبييض سحري')),
-                    DropdownMenuItem(value: 'original', child: Text('🎨 ألوان أصلية')),
-                    DropdownMenuItem(value: 'bw', child: Text('📄 أبيض وأسود')),
+                    DropdownMenuItem(
+                        value: 'magic', child: Text('✨ تبييض سحري')),
+                    DropdownMenuItem(
+                        value: 'original', child: Text('🎨 ألوان أصلية')),
+                    DropdownMenuItem(
+                        value: 'bw', child: Text('📄 أبيض وأسود')),
                   ],
-                  onChanged: (val) => setState(() => _selectedFilter = val!),
+                  onChanged: (val) =>
+                      setState(() => _selectedFilter = val!),
                 ),
                 ElevatedButton.icon(
                   onPressed: () {
@@ -754,8 +762,8 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                     });
                   },
                   icon: const Icon(Icons.center_focus_strong, size: 16),
-                  label:
-                      const Text('ضبط المربع', style: TextStyle(fontSize: 11)),
+                  label: const Text('ضبط المربع',
+                      style: TextStyle(fontSize: 11)),
                 ),
               ],
             ),
@@ -766,7 +774,6 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                 final w = constraints.maxWidth;
                 final h = constraints.maxHeight;
 
-                // ✅ الصورة تستخدم _imageBytes المخزن مسبقاً — لا إعادة تشفير
                 return Stack(
                   children: [
                     Center(
@@ -775,12 +782,10 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                         fit: BoxFit.contain,
                       ),
                     ),
-                    // خطوط القص
                     CustomPaint(
                       size: Size(w, h),
                       painter: CropLinesPainter(points: points),
                     ),
-                    // نقاط السحب الأربعة
                     ...List.generate(4, (index) {
                       return Positioned(
                         left: points[index].dx * w - 18,
@@ -806,7 +811,8 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                               border:
                                   Border.all(color: Colors.white, width: 3),
                               boxShadow: const [
-                                BoxShadow(color: Colors.black54, blurRadius: 4),
+                                BoxShadow(
+                                    color: Colors.black54, blurRadius: 4),
                               ],
                             ),
                           ),
