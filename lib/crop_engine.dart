@@ -199,7 +199,7 @@ class GoogleScanner {
   static Future<List<String>?> scan() async {
     try {
       final scanner = DocumentScanner(
-        options: const DocumentScannerOptions(
+        options: DocumentScannerOptions(
           documentFormats: {DocumentFormat.jpeg},
           mode: ScannerMode.filter,
           pageLimit: 10,
@@ -210,7 +210,7 @@ class GoogleScanner {
       final result = await scanner.scanDocument();
       scanner.close();
 
-      if (result.images.isEmpty) return null;
+      if (result.images == null || result.images!.isEmpty) return null;
       return result.images;
     } catch (_) {
       return null;
