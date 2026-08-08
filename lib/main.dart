@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
@@ -22,6 +23,48 @@ class MosulScannerApp extends StatelessWidget {
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
       home: const MainScannerScreen(),
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// OPENCV METHOD CHANNEL
+// ═══════════════════════════════════════════════════════
+class OpenCvBridge {
+  static const _channel = MethodChannel('com.mosulscanner/documentscanner');
+  static bool _warned = false;
+
+  static Future<String?> scanDocument(String inputPath) async {
+    final dir = Directory.systemTemp;
+    final outputPath = '${dir.path}/scanned_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    try {
+      final success = await _channel.invokeMethod('scanDocument', {
+        'inputPath': inputPath,
+        'outputPath': outputPath,
+      });
+      if (success == true && File(outputPath).existsSync()) {
+        return outputPath;
+      }
+    } catch (e) {
+      if (!_warned) {
+        _warned = true;
+      }
+    }
+    return null;
+  }
+
+  static Future<String?> enhanceImage(String inputPath) async {
+    final dir = Directory.systemTemp;
+    final outputPath = '${dir.path}/enhanced_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    try {
+      final success = await _channel.invokeMethod('enhanceImage', {
+        'inputPath': inputPath,
+        'outputPath': outputPath,
+      });
+      if (success == true && File(outputPath).existsSync()) {
+        return outputPath;
+      }
+    } catch (_) {}
+    return null;
   }
 }
 
@@ -70,137 +113,69 @@ class DocumentItem {
 }
 
 // ═══════════════════════════════════════════════════════
-// خوارزمية القص الذكي (بدون اعتماديات خارجية)
-// تستخدم مقاربة CamScanner:
-//   Grayscale → Gaussian Blur → Canny-like → Contour finding → Crop
+// خوارزمية احتياطية (Dart-only Sobel) إذا فشل OpenCV
 // ═══════════════════════════════════════════════════════
 class SmartScanner {
-  /// الخوارزمية الرئيسية
   static img.Image autoCrop(img.Image src) {
     final w = src.width, h = src.height;
     if (w < 50 || h < 50) return src;
-
-    // تصغير للتحليل السريع
     const maxDim = 256;
     final ratio = max(w, h) / maxDim;
     final img.Image small;
     if (ratio > 1) {
       small = img.copyResize(src, width: (w / ratio).round());
     } else {
-      small = img.copyResize(src, width: w); // نسخة للتحليل
+      small = img.copyResize(src, width: w);
     }
-
-    // 1. Grayscale
     final gray = img.grayscale(small);
-    // 2. Gaussian Blur (إزالة الضوضاء)
     final blur = img.gaussianBlur(gray, radius: 2);
-
-    // 3. Canny-like edge detection (Sobel + threshold)
     final edges = _sobelEdges(blur);
-
-    // 4. البحث عن حدود المستند عبر الإسقاطات
-    final bounds = _findDocumentBoundsFromEdges(edges);
-
+    final bounds = _findBounds(edges);
     if (bounds == null) return src;
-
-    // 5. تطبيق القص على الصورة الأصلية
-    if (ratio > 1) {
-      return _cropOriginal(src, bounds, ratio);
-    } else {
-      return _cropDirect(small, bounds);
-    }
+    final l = (bounds[0] * src.width / ratio).round().clamp(0, src.width - 1);
+    final t = (bounds[1] * src.height / ratio).round().clamp(0, src.height - 1);
+    final r = (bounds[2] * src.width / ratio).round().clamp(1, src.width);
+    final b = (bounds[3] * src.height / ratio).round().clamp(1, src.height);
+    final cw = r - l, ch = b - t;
+    if (cw < 20 || ch < 20) return src;
+    return img.copyCrop(src, x: l, y: t, width: cw, height: ch);
   }
 
-  /// Sobel edge detection
   static img.Image _sobelEdges(img.Image gray) {
     final w = gray.width, h = gray.height;
     final e = img.Image(width: w, height: h);
     for (int y = 1; y < h - 1; y++) {
       for (int x = 1; x < w - 1; x++) {
-        final a = gray.getPixel(x - 1, y - 1).r.toInt();
-        final b = gray.getPixel(x, y - 1).r.toInt();
-        final c = gray.getPixel(x + 1, y - 1).r.toInt();
-        final d = gray.getPixel(x - 1, y).r.toInt();
-        final f = gray.getPixel(x + 1, y).r.toInt();
-        final g = gray.getPixel(x - 1, y + 1).r.toInt();
-        final h = gray.getPixel(x, y + 1).r.toInt();
-        final i = gray.getPixel(x + 1, y + 1).r.toInt();
-        final gx = (c + 2 * f + i) - (a + 2 * d + g);
-        final gy = (g + 2 * h + i) - (a + 2 * b + c);
-        final m = sqrt(gx * gx + gy * gy).toInt().clamp(0, 255);
+        final a = gray.getPixel(x-1, y-1).r.toInt(), b = gray.getPixel(x, y-1).r.toInt(), c = gray.getPixel(x+1, y-1).r.toInt();
+        final d = gray.getPixel(x-1, y).r.toInt(), f = gray.getPixel(x+1, y).r.toInt();
+        final g = gray.getPixel(x-1, y+1).r.toInt(), hh = gray.getPixel(x, y+1).r.toInt(), i = gray.getPixel(x+1, y+1).r.toInt();
+        final gx = (c+2*f+i) - (a+2*d+g), gy = (g+2*hh+i) - (a+2*b+c);
+        final m = sqrt(gx*gx + gy*gy).toInt().clamp(0, 255);
         e.setPixelRgba(x, y, m, m, m, 255);
       }
     }
     return e;
   }
 
-  /// البحث عن حدود المستند من صورة الحواف
-  static List<double>? _findDocumentBoundsFromEdges(img.Image edges) {
+  static List<double>? _findBounds(img.Image edges) {
     final w = edges.width, h = edges.height;
-    // إسقاطات أفقية وعمودية
     final hp = List.filled(h, 0), vp = List.filled(w, 0);
-    const edgeThreshold = 50; // عتبة الحواف
-
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        final v = edges.getPixel(x, y).r.toInt();
-        if (v > edgeThreshold) { hp[y]++; vp[x]++; }
-      }
-    }
-
-    final maxH = hp.reduce(max), maxV = vp.reduce(max);
-    if (maxH < 6 || maxV < 6) return null;
-
-    // عتبة ديناميكية
-    final thH = (maxH * 0.10).ceilToDouble();
-    final thV = (maxV * 0.10).ceilToDouble();
-
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) if (edges.getPixel(x, y).r.toInt() > 50) { hp[y]++; vp[x]++; }
+    final mh = hp.reduce(max), mv = vp.reduce(max);
+    if (mh < 6 || mv < 6) return null;
+    final th = (mh * 0.10).ceilToDouble(), tv = (mv * 0.10).ceilToDouble();
     int? top, bot, lft, rgt;
-    for (int y = 0; y < h; y++) if (hp[y] >= thH) { top = y; break; }
-    for (int y = h - 1; y >= 0; y--) if (hp[y] >= thH) { bot = y; break; }
-    for (int x = 0; x < w; x++) if (vp[x] >= thV) { lft = x; break; }
-    for (int x = w - 1; x >= 0; x--) if (vp[x] >= thV) { rgt = x; break; }
-
+    for (int y = 0; y < h; y++) if (hp[y] >= th) { top = y; break; }
+    for (int y = h - 1; y >= 0; y--) if (hp[y] >= th) { bot = y; break; }
+    for (int x = 0; x < w; x++) if (vp[x] >= tv) { lft = x; break; }
+    for (int x = w - 1; x >= 0; x--) if (vp[x] >= tv) { rgt = x; break; }
     if (top == null || bot == null || lft == null || rgt == null) return null;
-
     final dw = rgt - lft, dh = bot - top;
-    if (dw < w * 0.04 || dh < h * 0.04) return null;
-    if (dw > w * 0.96 && dh > h * 0.96) return null; // كل الصورة = لا مستند
-
-    // هامش أمان طفيف
-    const pad = 0.01;
-    return [
-      (lft / w - pad).clamp(0.0, 1.0),
-      (top / h - pad).clamp(0.0, 1.0),
-      (rgt / w + pad).clamp(0.0, 1.0),
-      (bot / h + pad).clamp(0.0, 1.0),
-    ];
+    if (dw < w * 0.04 || dh < h * 0.04 || (dw > w * 0.96 && dh > h * 0.96)) return null;
+    return [lft/w - 0.01, top/h - 0.01, rgt/w + 0.01, bot/h + 0.01];
   }
 
-  static img.Image _cropOriginal(img.Image src, List<double> b, double ratio) {
-    final l = (b[0] * src.width / ratio).round().clamp(0, src.width - 1);
-    final t = (b[1] * src.height / ratio).round().clamp(0, src.height - 1);
-    final r = (b[2] * src.width / ratio).round().clamp(1, src.width);
-    final bt = (b[3] * src.height / ratio).round().clamp(1, src.height);
-    final cw = r - l, ch = bt - t;
-    if (cw < 20 || ch < 20) return src;
-    return img.copyCrop(src, x: l, y: t, width: cw, height: ch);
-  }
-
-  static img.Image _cropDirect(img.Image img, List<double> b) {
-    final l = (b[0] * img.width).round().clamp(0, img.width - 1);
-    final t = (b[1] * img.height).round().clamp(0, img.height - 1);
-    final r = (b[2] * img.width).round().clamp(1, img.width);
-    final bt = (b[3] * img.height).round().clamp(1, img.height);
-    final cw = r - l, ch = bt - t;
-    if (cw < 20 || ch < 20) return img;
-    return img.copyCrop(img, x: l, y: t, width: cw, height: ch);
-  }
-
-  /// تحسين ناعم
-  static img.Image softEnhance(img.Image src) {
-    return img.adjustColor(src, brightness: 1.04, contrast: 1.10);
-  }
+  static img.Image softEnhance(img.Image src) => img.adjustColor(src, brightness: 1.04, contrast: 1.10);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -237,8 +212,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       setState(() {
         final item = DocumentItem(
           id: '${DateTime.now().millisecondsSinceEpoch}$i',
-          image: decoded,
-          cachedBytes: encoded,
+          image: decoded, cachedBytes: encoded,
           widthMm: _mode == 'photos' ? 36 : 85,
           heightMm: _mode == 'photos' ? 45 : (decoded.height / decoded.width * 85),
           xMm: mMm + (_items.length * 4), yMm: mMm + (_items.length * 4),
@@ -280,22 +254,65 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     });
   }
 
-  void _smartCrop() {
+  /// القص الذكي — يحاول OpenCV أولاً، ثم Sobel الاحتياطي
+  void _smartCrop() async {
     if (_activeItem == null) return;
     setState(() => _processing = true);
-    // استخدام Isolate-like approach: ننفذ في نفس الثريد مع مؤشر تحميل
-    Future.delayed(const Duration(milliseconds: 50), () {
-      final cropped = SmartScanner.autoCrop(_activeItem!.rotatedImage);
-      if (mounted) {
+
+    final item = _activeItem!;
+    final tempDir = Directory.systemTemp;
+    final inputPath = '${tempDir.path}/scan_input_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    try {
+      // حفظ الصورة مؤقتاً
+      await File(inputPath).writeAsBytes(item.cachedBytes);
+
+      // المحاولة الأولى: OpenCV الأصلي (مثل CamScanner)
+      final openCvResult = await OpenCvBridge.scanDocument(inputPath);
+
+      img.Image? result;
+
+      if (openCvResult != null) {
+        // نجح OpenCV!
+        final bytes = await File(openCvResult).readAsBytes();
+        result = img.decodeImage(bytes);
+        try { File(openCvResult).deleteSync(); } catch (_) {}
+      }
+
+      if (result == null && mounted) {
+        // المحاولة الثانية: خوارزمية Dart الاحتياطية
+        result = SmartScanner.autoCrop(item.rotatedImage);
+      }
+
+      if (result != null && mounted) {
         setState(() {
-          _activeItem!.image = cropped;
-          _activeItem!.cachedBytes = Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
-          _activeItem!.rotation = 0;
-          _activeItem!.heightMm = cropped.height / cropped.width * _activeItem!.widthMm;
-          _processing = false;
+          item.image = result!;
+          item.cachedBytes = Uint8List.fromList(img.encodeJpg(result!, quality: 92));
+          item.rotation = 0;
+          item.heightMm = result!.height / result!.width * item.widthMm;
         });
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        // المحاولة الأخيرة: Dart fallback
+        final fallback = SmartScanner.autoCrop(item.rotatedImage);
+        if (fallback.width != item.image.width || fallback.height != item.image.height) {
+          setState(() {
+            item.image = fallback;
+            item.cachedBytes = Uint8List.fromList(img.encodeJpg(fallback, quality: 92));
+            item.rotation = 0;
+            item.heightMm = fallback.height / fallback.width * item.widthMm;
+          });
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('لم يتم اكتشاف مستند في الصورة'), backgroundColor: Colors.orange),
+          );
+        }
+      }
+    } finally {
+      try { File(inputPath).deleteSync(); } catch (_) {}
+      if (mounted) setState(() => _processing = false);
+    }
   }
 
   void _manualCrop() async {
@@ -326,7 +343,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     await Printing.layoutPdf(onLayout: (_) async => pdf.save());
   }
 
-  // ════════════ UI ════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -344,13 +360,10 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       ),
       body: LayoutBuilder(builder: (_, c) {
         final tw = c.maxWidth, th = c.maxHeight;
-        final sw = tw * 0.19;
-        final cw = tw - sw;
-        final tbh = 44.0;
+        final sw = tw * 0.19, cw = tw - sw, tbh = 46.0;
         final ch = th - tbh;
         final sc = min((cw - 12) / pwMm, (ch - 12) / phMm);
         return Column(children: [
-          // شريط علوي
           Container(height: tbh, padding: const EdgeInsets.symmetric(horizontal: 6),
             decoration: const BoxDecoration(color: Color(0xFF1E293B), border: Border(bottom: BorderSide(color: Color(0xFF334155)))),
             child: Row(children: [
@@ -364,16 +377,14 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 style: const ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap, visualDensity: VisualDensity.compact),
               ),
               const SizedBox(width: 8),
-              _tb('قص ذكي', Icons.auto_fix_high, const Color(0xFFF59E0B), _smartCrop, _processing),
+              _tb('قص ذكي 🤖', Icons.auto_fix_high, const Color(0xFFF59E0B), _smartCrop, _processing),
               _tb('قص يدوي', Icons.crop_free, const Color(0xFF06B6D4), _manualCrop, false),
               _tb('ترتيب', Icons.auto_awesome, const Color(0xFF10B981), _align, false),
               const Spacer(),
               _tb('تدوير', Icons.rotate_right, const Color(0xFF94A3B8), _rotate, false),
               _tb('نسخ', Icons.copy, const Color(0xFFA78BFA), _duplicate, false),
             ])),
-          // المحتوى
           Expanded(child: Row(children: [
-            // Sidebar
             SizedBox(width: sw, child: Container(color: const Color(0xFFF1F5F9), padding: const EdgeInsets.all(5),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -398,7 +409,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                   )),
               ]),
             )),
-            // Canvas
             Expanded(child: Container(color: const Color(0xFF1E293B),
               child: Center(child: Container(width: pwMm * sc, height: phMm * sc,
                 decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 14, offset: const Offset(0, 4))]),
@@ -425,29 +435,28 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     );
   }
 
-  Widget _tb(String label, IconData icon, Color color, VoidCallback onTap, bool loading) {
+  Widget _tb(String l, IconData i, Color c, VoidCallback t, bool ld) {
     return Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
       child: TextButton(
         style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-        onPressed: loading ? null : onTap,
+        onPressed: ld ? null : t,
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          loading ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : Icon(icon, size: 15, color: color),
+          ld ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Icon(i, size: 15, color: c),
           const SizedBox(width: 3),
-          Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: loading ? Colors.white54 : Colors.white)),
+          Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: ld ? Colors.white54 : Colors.white)),
         ]),
       ),
     );
   }
 
-  Widget _sz(String label, VoidCallback onTap, {Color c = const Color(0xFF0369A1)}) {
+  Widget _sz(String l, VoidCallback t, {Color c = const Color(0xFF0369A1)}) {
     return Padding(padding: const EdgeInsets.only(bottom: 3),
       child: SizedBox(height: 34, child: ElevatedButton(
         style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 2), minimumSize: const Size(0, 34),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
           backgroundColor: c.withOpacity(0.08), foregroundColor: c, side: BorderSide(color: c.withOpacity(0.3)), elevation: 0),
-        onPressed: onTap,
-        child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: c, height: 1.2)),
+        onPressed: t,
+        child: Text(l, textAlign: TextAlign.center, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: c, height: 1.2)),
       )),
     );
   }
@@ -478,21 +487,20 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
 
   void _apply() {
     final src = widget.image;
-    final xs = [(_tlX * src.width).round(), (_trX * src.width).round(), (_brX * src.width).round(), (_blX * src.width).round()];
-    final ys = [(_tlY * src.height).round(), (_trY * src.height).round(), (_brY * src.height).round(), (_blY * src.height).round()];
-    final minX = xs.reduce(min).clamp(0, src.width - 1), maxX = xs.reduce(max).clamp(1, src.width);
-    final minY = ys.reduce(min).clamp(0, src.height - 1), maxY = ys.reduce(max).clamp(1, src.height);
-    var c = img.copyCrop(src, x: minX, y: minY, width: max(10, maxX - minX), height: max(10, maxY - minY));
+    final xs = [(_tlX*src.width).round(), (_trX*src.width).round(), (_brX*src.width).round(), (_blX*src.width).round()];
+    final ys = [(_tlY*src.height).round(), (_trY*src.height).round(), (_brY*src.height).round(), (_blY*src.height).round()];
+    final mx = xs.reduce(min).clamp(0, src.width-1), xx = xs.reduce(max).clamp(1, src.width);
+    final my = ys.reduce(min).clamp(0, src.height-1), xy = ys.reduce(max).clamp(1, src.height);
+    var c = img.copyCrop(src, x: mx, y: my, width: max(10, xx-mx), height: max(10, xy-my));
     if (_filter == 'soft') c = SmartScanner.softEnhance(c);
     else if (_filter == 'bw') c = img.grayscale(c);
     Navigator.pop(context, c);
   }
 
   Widget _dot(double x, double y, double w, double h, void Function(double, double) s) {
-    return Positioned(left: x * w - 22, top: y * h - 22,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: (d) => setState(() => s((x + d.delta.dx / w).clamp(0.0, 1.0), (y + d.delta.dy / h).clamp(0.0, 1.0))),
+    return Positioned(left: x*w-22, top: y*h-22,
+      child: GestureDetector(behavior: HitTestBehavior.opaque,
+        onPanUpdate: (d) => setState(() => s((x+d.delta.dx/w).clamp(0.0,1.0), (y+d.delta.dy/h).clamp(0.0,1.0))),
         child: Container(width: 44, height: 44,
           decoration: BoxDecoration(color: const Color(0xFF2563EB), shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6)])),
@@ -502,8 +510,7 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B1121),
+    return Scaffold(backgroundColor: const Color(0xFF0B1121),
       appBar: AppBar(title: const Text('القص اليدوي', style: TextStyle(fontSize: 14)), centerTitle: true,
         backgroundColor: Colors.black, foregroundColor: Colors.white,
         actions: [Padding(padding: const EdgeInsets.only(right: 8), child: IconButton(icon: const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 30), onPressed: _apply))]),
@@ -511,9 +518,9 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
         Container(color: const Color(0xFF1A1F2E), padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Text('الفلتر:  ', style: TextStyle(color: Colors.white70, fontSize: 11)),
-            _chip('أصلي', _filter == 'original', () => setState(() => _filter = 'original')),
-            _chip('ناعم ✨', _filter == 'soft', () => setState(() => _filter = 'soft')),
-            _chip('أبيض وأسود', _filter == 'bw', () => setState(() => _filter = 'bw')),
+            _chip('أصلي', _filter=='original', () => setState(() => _filter='original')),
+            _chip('ناعم ✨', _filter=='soft', () => setState(() => _filter='soft')),
+            _chip('أبيض وأسود', _filter=='bw', () => setState(() => _filter='bw')),
             const SizedBox(width: 8),
             TextButton.icon(onPressed: () => setState(() { _tlX=_tlY=0.05; _trX=0.95; _trY=0.05; _brX=_brY=0.95; _blX=0.05; _blY=0.95; }),
               icon: const Icon(Icons.refresh, size: 14, color: Colors.white60), label: const Text('إعادة', style: TextStyle(fontSize: 10, color: Colors.white60))),
@@ -522,12 +529,10 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
           final w = c.maxWidth, h = c.maxHeight;
           return Stack(children: [
             Center(child: Image.memory(_bytes, fit: BoxFit.contain)),
-            Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _Overlay(_tlX*w, _tlY*h, _trX*w, _trY*h, _brX*w, _brY*h, _blX*w, _blY*h)))),
-            CustomPaint(size: Size(w, h), painter: _Lines([Offset(_tlX*w, _tlY*h), Offset(_trX*w, _trY*h), Offset(_brX*w, _brY*h), Offset(_blX*w, _blY*h)])),
-            _dot(_tlX, _tlY, w, h, (dx, dy) { _tlX=dx; _tlY=dy; }),
-            _dot(_trX, _trY, w, h, (dx, dy) { _trX=dx; _trY=dy; }),
-            _dot(_brX, _brY, w, h, (dx, dy) { _brX=dx; _brY=dy; }),
-            _dot(_blX, _blY, w, h, (dx, dy) { _blX=dx; _blY=dy; }),
+            Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _Ovr(_tlX*w, _tlY*h, _trX*w, _trY*h, _brX*w, _brY*h, _blX*w, _blY*h)))),
+            CustomPaint(size: Size(w, h), painter: _Ln([Offset(_tlX*w, _tlY*h), Offset(_trX*w, _trY*h), Offset(_brX*w, _brY*h), Offset(_blX*w, _blY*h)])),
+            _dot(_tlX, _tlY, w, h, (dx,dy) { _tlX=dx; _tlY=dy; }), _dot(_trX, _trY, w, h, (dx,dy) { _trX=dx; _trY=dy; }),
+            _dot(_brX, _brY, w, h, (dx,dy) { _brX=dx; _brY=dy; }), _dot(_blX, _blY, w, h, (dx,dy) { _blX=dx; _blY=dy; }),
           ]);
         })),
       ]),
@@ -535,14 +540,14 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
   }
 
   Widget _chip(String l, bool sel, VoidCallback t) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: ChoiceChip(label: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: sel ? Colors.white : Colors.white70)),
+    child: ChoiceChip(label: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: sel?Colors.white:Colors.white70)),
       selected: sel, onSelected: (_) => t(), selectedColor: const Color(0xFF2563EB), backgroundColor: const Color(0xFF1E293B),
       side: BorderSide.none, padding: const EdgeInsets.symmetric(horizontal: 4), visualDensity: VisualDensity.compact));
 }
 
-class _Overlay extends CustomPainter {
+class _Ovr extends CustomPainter {
   final double x1,y1,x2,y2,x3,y3,x4,y4;
-  _Overlay(this.x1,this.y1,this.x2,this.y2,this.x3,this.y3,this.x4,this.y4);
+  _Ovr(this.x1,this.y1,this.x2,this.y2,this.x3,this.y3,this.x4,this.y4);
   @override void paint(Canvas c, Size s) {
     final o = Path()..addRect(Rect.fromLTWH(0,0,s.width,s.height));
     final i = Path()..moveTo(x1,y1)..lineTo(x2,y2)..lineTo(x3,y3)..lineTo(x4,y4)..close();
@@ -551,9 +556,9 @@ class _Overlay extends CustomPainter {
   @override bool shouldRepaint(_) => true;
 }
 
-class _Lines extends CustomPainter {
+class _Ln extends CustomPainter {
   final List<Offset> p;
-  _Lines(this.p);
+  _Ln(this.p);
   @override void paint(Canvas c, Size s) {
     final pt = Paint()..color = const Color(0xFF22D3EE)..strokeWidth = 2.5..style = PaintingStyle.stroke;
     final ph = Path()..moveTo(p[0].dx,p[0].dy); for (int i=1;i<4;i++) ph.lineTo(p[i].dx,p[i].dy);
