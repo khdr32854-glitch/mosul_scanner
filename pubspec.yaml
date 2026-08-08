@@ -1,5 +1,5 @@
 name: mosul_scanner
-description: "A new Flutter project."
+description: "Mosul Scanner - Smart Printing & Document Scanner App"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,8 +11,9 @@ dependencies:
   flutter:
     sdk: flutter
   image_picker: ^1.1.2
-  image: ^4.2.0
-  share_plus: ^10.0.0
+  image: ^4.2.0ب
+  pdf: ^3.10.8
+  printing: ^5.13.1
 
 dev_dependencies:
   flutter_test:
