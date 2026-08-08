@@ -143,38 +143,3 @@ class ImageUtils {
     return null;
   }
 }
-    if (wp < iw * ih * 0.01 || wp > iw * ih * 0.99) return null;
-    final hp = List.filled(ih, 0), vp = List.filled(iw, 0);
-    for (int y = 0; y < ih; y++) for (int x = 0; x < iw; x++) if (bin.getPixel(x,y).r.toInt() > 128) { hp[y]++; vp[x]++; }
-    final thH = hp.reduce(max) * 0.06, thV = vp.reduce(max) * 0.06;
-    int? t, b, l, r;
-    for (int y = 0; y < ih; y++) if (hp[y] >= thH) { t = y; break; }
-    for (int y = ih-1; y >= 0; y--) if (hp[y] >= thH) { b = y; break; }
-    for (int x = 0; x < iw; x++) if (vp[x] >= thV) { l = x; break; }
-    for (int x = iw-1; x >= 0; x--) if (vp[x] >= thV) { r = x; break; }
-    if (t == null || b == null || l == null || r == null) return null;
-    if (r - l < 30 || b - t < 30) return null;
-    return [l, t, r, b];
-  }
-}
-
-/// قص يدوي
-class ManualCrop {
-  static img.Image cropFromPoints(img.Image src, double x1, double y1, double x2, double y2, double x3, double y3, double x4, double y4) {
-    final ax = [x1*src.width, x2*src.width, x3*src.width, x4*src.width];
-    final ay = [y1*src.height, y2*src.height, y3*src.height, y4*src.height];
-    final l = ax.reduce(min).round().clamp(0, src.width-1), r = ax.reduce(max).round().clamp(1, src.width);
-    final t = ay.reduce(min).round().clamp(0, src.height-1), b = ay.reduce(max).round().clamp(1, src.height);
-    return img.copyCrop(src, x: l, y: t, width: max(10, r-l), height: max(10, b-t));
-  }
-}
-
-/// أدوات مساعدة
-class ImageUtils {
-  static List<int> encodeJpg(img.Image src, {int quality = 92}) => img.encodeJpg(src, quality: quality);
-  static img.Image? decodeJpg(dynamic bytes) {
-    if (bytes is Uint8List) return img.decodeImage(bytes);
-    if (bytes is List<int>) return img.decodeImage(Uint8List.fromList(bytes));
-    return null;
-  }
-}
