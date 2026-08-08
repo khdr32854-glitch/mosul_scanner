@@ -1,4 +1,4 @@
-import 'dart:io';
+ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -66,6 +66,185 @@ class DocumentItem {
 }
 
 // ═══════════════════════════════════════════════════════
+// خوارزمية المسح الذكي — Computer Vision متكاملة
+// ═══════════════════════════════════════════════════════
+class SmartScanner {
+  /// تحويل إلى تدرج رمادي
+  static img.Image toGrayscale(img.Image src) {
+    return img.grayscale(src);
+  }
+
+  /// Gaussian Blur بسيط (3x3 kernel)
+  static img.Image gaussianBlur(img.Image src) {
+    return img.gaussianBlur(src, radius: 2);
+  }
+
+  /// كشف الحواف عبر Sobel operator
+  static img.Image sobelEdgeDetection(img.Image gray) {
+    final w = gray.width;
+    final h = gray.height;
+    final edges = img.Image(width: w, height: h);
+
+    for (int y = 1; y < h - 1; y++) {
+      for (int x = 1; x < w - 1; x++) {
+        final tl = gray.getPixel(x - 1, y - 1).r.toInt();
+        final tc = gray.getPixel(x, y - 1).r.toInt();
+        final tr = gray.getPixel(x + 1, y - 1).r.toInt();
+        final ml = gray.getPixel(x - 1, y).r.toInt();
+        final mr = gray.getPixel(x + 1, y).r.toInt();
+        final bl = gray.getPixel(x - 1, y + 1).r.toInt();
+        final bc = gray.getPixel(x, y + 1).r.toInt();
+        final br = gray.getPixel(x + 1, y + 1).r.toInt();
+
+        final gx = (tr + 2 * mr + br) - (tl + 2 * ml + bl);
+        final gy = (bl + 2 * bc + br) - (tl + 2 * tc + tr);
+        final mag = sqrt(gx * gx + gy * gy).toInt().clamp(0, 255);
+
+        edges.setPixelRgba(x, y, mag, mag, mag, 255);
+      }
+    }
+    return edges;
+  }
+
+  /// البحث عن حدود المستند من صورة الحواف
+  /// يُعيد (left, top, right, bottom) كنسب 0.0 - 1.0
+  static List<double>? findDocumentBounds(img.Image edgeImage) {
+    final w = edgeImage.width;
+    final h = edgeImage.height;
+
+    if (w < 50 || h < 50) return null;
+
+    // كل بكسل حوافي = قيمته > عتبة
+    const edgeThreshold = 40;
+
+    // تجميع الإسقاطات الأفقية والعمودية
+    final hProj = List<int>.filled(h, 0); // إسقاط أفقي (لكل صف)
+    final vProj = List<int>.filled(w, 0); // إسقاط عمودي (لكل عمود)
+
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final p = edgeImage.getPixel(x, y);
+        final val = (p.r + p.g + p.b) ~/ 3;
+        if (val > edgeThreshold) {
+          hProj[y]++;
+          vProj[x]++;
+        }
+      }
+    }
+
+    // البحث عن القمم في الإسقاطات (بداية ونهاية المنطقة ذات الحواف الكثيفة)
+    final thresholdH = hProj.reduce((a, b) => a > b ? a : b) * 0.15;
+    final thresholdV = vProj.reduce((a, b) => a > b ? a : b) * 0.15;
+
+    int? top, bottom, left, right;
+
+    for (int y = 0; y < h; y++) {
+      if (hProj[y] > thresholdH) { top = y; break; }
+    }
+    for (int y = h - 1; y >= 0; y--) {
+      if (hProj[y] > thresholdH) { bottom = y; break; }
+    }
+    for (int x = 0; x < w; x++) {
+      if (vProj[x] > thresholdV) { left = x; break; }
+    }
+    for (int x = w - 1; x >= 0; x--) {
+      if (vProj[x] > thresholdV) { right = x; break; }
+    }
+
+    if (top == null || bottom == null || left == null || right == null) {
+      return null;
+    }
+
+    final docH = bottom - top;
+    final docW = right - left;
+
+    // تحقق: المستند يجب أن يكون معقول الحجم
+    if (docW < w * 0.08 || docH < h * 0.08) return null;
+    if (docW > w * 0.96 && docH > h * 0.96) return null; // كامل الصورة = لا مستند
+
+    // إضافة هامش صغير للأمان
+    const marginRatio = 0.01;
+    final finalLeft = (left / w - marginRatio).clamp(0.0, 1.0);
+    final finalTop = (top / h - marginRatio).clamp(0.0, 1.0);
+    final finalRight = (right / w + marginRatio).clamp(0.0, 1.0);
+    final finalBottom = (bottom / h + marginRatio).clamp(0.0, 1.0);
+
+    return [finalLeft, finalTop, finalRight, finalBottom];
+  }
+
+  /// ✅ خط الأنابيب الكامل:
+  /// Grayscale → Blur → Sobel → FindBounds → Crop → Enhance
+  static img.Image processDocument(img.Image src) {
+    final w = src.width;
+    final h = src.height;
+
+    // تصغير الصورة للتحليل السريع (max 500px عرض)
+    img.Image small;
+    double ratio;
+    if (w > 500) {
+      ratio = w / 500.0;
+      small = img.copyResize(src, width: 500);
+    } else {
+      ratio = 1.0;
+      small = src;
+    }
+
+    // 1. Grayscale
+    final gray = toGrayscale(small);
+
+    // 2. Gaussian Blur
+    final blurred = gaussianBlur(gray);
+
+    // 3. Sobel Edge Detection
+    final edges = sobelEdgeDetection(blurred);
+
+    // 4. البحث عن حدود المستند
+    final bounds = findDocumentBounds(edges);
+
+    img.Image cropped;
+    if (bounds != null) {
+      final left = (bounds[0] * small.width).toInt().clamp(0, small.width - 1);
+      final top = (bounds[1] * small.height).toInt().clamp(0, small.height - 1);
+      final right = (bounds[2] * small.width).toInt().clamp(1, small.width);
+      final bottom = (bounds[3] * small.height).toInt().clamp(1, small.height);
+
+      // التحويل إلى الصورة الأصلية إذا كنا نستخدم صورة مصغرة
+      if (ratio > 1.0) {
+        final origLeft = (left * ratio).toInt().clamp(0, src.width - 1);
+        final origTop = (top * ratio).toInt().clamp(0, src.height - 1);
+        final origRight = (right * ratio).toInt().clamp(1, src.width);
+        final origBottom = (bottom * ratio).toInt().clamp(1, src.height);
+        final cw = origRight - origLeft;
+        final ch = origBottom - origTop;
+
+        if (cw > 20 && ch > 20 && cw < src.width * 0.95) {
+          cropped = img.copyCrop(src, x: origLeft, y: origTop, width: cw, height: ch);
+        } else {
+          cropped = src;
+        }
+      } else {
+        final cw = right - left;
+        final ch = bottom - top;
+        if (cw > 20 && ch > 20 && cw < src.width * 0.95) {
+          cropped = img.copyCrop(src, x: left, y: top, width: cw, height: ch);
+        } else {
+          cropped = src;
+        }
+      }
+    } else {
+      // فشل الكشف - قص بسيط 4%
+      final mx = (src.width * 0.04).toInt();
+      final my = (src.height * 0.04).toInt();
+      cropped = img.copyCrop(
+          src, x: mx, y: my, width: src.width - mx * 2, height: src.height - my * 2);
+    }
+
+    // 5. تحسين الألوان (تبييض + تباين)
+    return img.adjustColor(cropped, brightness: 1.10, contrast: 1.25);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // MAIN SCREEN
 // ═══════════════════════════════════════════════════════
 class MainScannerScreen extends StatefulWidget {
@@ -81,131 +260,13 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   final ImagePicker _picker = ImagePicker();
   String _currentMode = 'docs';
 
-  // ✅ ثوابت الصفحة بالمليمتر
-  static const double pageWidthMm = 210; // A4 عرض
-  static const double pageHeightMm = 297; // A4 طول
-  static const double pageMarginMm = 10; // هامش
+  static const double pageWidthMm = 210; // A4
+  static const double pageHeightMm = 297;
+  static const double pageMarginMm = 10;
 
   void _refreshCachedBytes(DocumentItem item) {
     item.cachedBytes =
         Uint8List.fromList(img.encodeJpg(item.image, quality: 90));
-  }
-
-  // ──── قص تلقائي محسّن (يبحث عن الحواف الحقيقية) ────
-  img.Image _smartCrop(img.Image src) {
-    final w = src.width;
-    final h = src.height;
-    if (w < 100 || h < 100) return src;
-
-    // 1. تحويل الصورة إلى تدرج رمادي للتحليل
-    final gray = img.grayscale(img.copyResize(src, width: min(w, 400)));
-
-    // 2. حساب متوسط الخلفية من الحواف
-    final bw = min(15, gray.width ~/ 10);
-    final bh = min(15, gray.height ~/ 10);
-    double bgSum = 0;
-    int bgCount = 0;
-
-    for (int x = 0; x < gray.width; x++) {
-      for (int y = 0; y < bh; y++) {
-        bgSum += gray.getPixel(x, y).r; // تدرج رمادي: كل القنوات متساوية
-        bgCount++;
-      }
-      for (int y = max(0, gray.height - bh); y < gray.height; y++) {
-        bgSum += gray.getPixel(x, y).r;
-        bgCount++;
-      }
-    }
-    for (int y = bh; y < gray.height - bh; y++) {
-      for (int x = 0; x < bw; x++) {
-        bgSum += gray.getPixel(x, y).r;
-        bgCount++;
-      }
-      for (int x = max(0, gray.width - bw); x < gray.width; x++) {
-        bgSum += gray.getPixel(x, y).r;
-        bgCount++;
-      }
-    }
-
-    if (bgCount < 50) return src;
-    final double bgVal = bgSum / bgCount;
-
-    // 3. عتبة فرق — منخفضة لاكتشاف حتى الخلفيات القريبة
-    const double threshold = 18.0;
-
-    int findLeft() {
-      for (int x = 0; x < gray.width; x++) {
-        int diffs = 0;
-        final samples = max(20, gray.height ~/ 15);
-        for (int i = 0; i < samples; i++) {
-          final y = gray.height * i ~/ samples;
-          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
-        }
-        if (diffs > samples * 0.25) return max(0, x - 3);
-      }
-      return 0;
-    }
-
-    int findRight() {
-      for (int x = gray.width - 1; x >= 0; x--) {
-        int diffs = 0;
-        final samples = max(20, gray.height ~/ 15);
-        for (int i = 0; i < samples; i++) {
-          final y = gray.height * i ~/ samples;
-          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
-        }
-        if (diffs > samples * 0.25) return min(gray.width, x + 3);
-      }
-      return gray.width;
-    }
-
-    int findTop() {
-      for (int y = 0; y < gray.height; y++) {
-        int diffs = 0;
-        final samples = max(20, gray.width ~/ 15);
-        for (int i = 0; i < samples; i++) {
-          final x = gray.width * i ~/ samples;
-          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
-        }
-        if (diffs > samples * 0.25) return max(0, y - 3);
-      }
-      return 0;
-    }
-
-    int findBottom() {
-      for (int y = gray.height - 1; y >= 0; y--) {
-        int diffs = 0;
-        final samples = max(20, gray.width ~/ 15);
-        for (int i = 0; i < samples; i++) {
-          final x = gray.width * i ~/ samples;
-          if ((gray.getPixel(x, y).r - bgVal).abs() > threshold) diffs++;
-        }
-        if (diffs > samples * 0.25) return min(gray.height, y + 3);
-      }
-      return gray.height;
-    }
-
-    // 4. تحويل الإحداثيات من الصورة المصغرة إلى الأصلية
-    final scaleX = w / gray.width;
-    final scaleY = h / gray.height;
-    final left = (findLeft() * scaleX).toInt().clamp(0, w - 1);
-    final right = (findRight() * scaleX).toInt().clamp(1, w);
-    final top = (findTop() * scaleY).toInt().clamp(0, h - 1);
-    final bottom = (findBottom() * scaleY).toInt().clamp(1, h);
-
-    int cropW = right - left;
-    int cropH = bottom - top;
-
-    // 5. فحص: إذا كان القص يغطي كل الصورة تقريباً، نستخدم قص بسيط
-    if (cropW < 30 || cropH < 30 || cropW > w * 0.92 || cropH > h * 0.92) {
-      final mx = (w * 0.04).toInt();
-      final my = (h * 0.04).toInt();
-      return img.copyCrop(
-          src, x: mx, y: my, width: w - mx * 2, height: h - my * 2);
-    }
-
-    return img.copyCrop(
-        src, x: left, y: top, width: cropW, height: cropH);
   }
 
   void _addNewImages(ImageSource source) async {
@@ -214,8 +275,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       final files = await _picker.pickMultiImage();
       pickedFiles.addAll(files);
     } else {
-      final file = await _picker.pickImage(source: source,
-          imageQuality: 95);
+      final file = await _picker.pickImage(source: source, imageQuality: 95);
       if (file != null) pickedFiles.add(file);
     }
 
@@ -224,24 +284,21 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       final decodedImg = img.decodeImage(bytes);
 
       if (decodedImg != null) {
-        // تطبيق القص الذكي
-        final autoCropped = _smartCrop(decodedImg);
-        // تحسين الألوان
-        final enhanced = img.adjustColor(autoCropped,
-            brightness: 1.06, contrast: 1.15);
+        // ✅ تطبيق خوارزمية المسح الذكي الكاملة
+        final scanned = SmartScanner.processDocument(decodedImg);
         final encodedBytes =
-            Uint8List.fromList(img.encodeJpg(enhanced, quality: 90));
+            Uint8List.fromList(img.encodeJpg(scanned, quality: 90));
 
         setState(() {
           final newItem = DocumentItem(
             id: DateTime.now().millisecondsSinceEpoch.toString() +
                 i.toString(),
-            image: enhanced,
+            image: scanned,
             cachedBytes: encodedBytes,
             widthMm: _currentMode == 'photos' ? 36 : 85,
             heightMm: _currentMode == 'photos'
                 ? 45
-                : (enhanced.height / enhanced.width * 85),
+                : (scanned.height / scanned.width * 85),
             xMm: pageMarginMm + (_items.length * 4),
             yMm: pageMarginMm + (_items.length * 4),
             isPhotoStyle: _currentMode == 'photos',
@@ -456,7 +513,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     },
                   ),
                   const SizedBox(height: 8),
-
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF10B981),
@@ -467,7 +523,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                         style: TextStyle(fontSize: 11)),
                   ),
                   const SizedBox(height: 4),
-
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFD97706),
@@ -478,7 +533,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                         style: TextStyle(fontSize: 11)),
                   ),
                   const SizedBox(height: 4),
-
                   Row(
                     children: [
                       Expanded(
@@ -505,7 +559,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ],
                   ),
                   const Divider(),
-
                   if (_currentMode == 'docs') ...[
                     const Text('قياسات المستمسكات (سم)',
                         style: TextStyle(
@@ -549,7 +602,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ),
                   ],
                   const Divider(),
-
                   if (_activeItem != null)
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
@@ -570,14 +622,14 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             ),
           ),
 
-          // ── ✅ PAGE CANVAS — A4 حقيقي يملأ المساحة ──────
+          // ── ✅ PAGE CANVAS — يملأ كامل المساحة بنسبة A4 ──
           Expanded(
             child: Container(
               color: const Color(0xFF475569),
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  // ✅ حساب عامل التكبير ليملأ المساحة المتاحة
-                  final scaleX = (constraints.maxWidth - 20) / pageWidthMm;
+                  final scaleX =
+                      (constraints.maxWidth - 20) / pageWidthMm;
                   final scaleY =
                       (constraints.maxHeight - 20) / pageHeightMm;
                   final scale = min(scaleX, scaleY);
@@ -634,7 +686,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                     ),
                                   ),
                                   child: Transform.rotate(
-                                    angle: item.rotation * pi / 180,
+                                    angle:
+                                        item.rotation * pi / 180,
                                     child: Image.memory(
                                       item.cachedBytes,
                                       fit: BoxFit.fill,
@@ -659,7 +712,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 }
 
 // ═══════════════════════════════════════════════════════
-// SMART CROP SCREEN — محسّن الأداء
+// SMART CROP SCREEN
 // ═══════════════════════════════════════════════════════
 class SmartCropScreen extends StatefulWidget {
   final img.Image image;
@@ -683,7 +736,8 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
       const Offset(0.95, 0.95),
       const Offset(0.05, 0.95),
     ];
-    _imageBytes = Uint8List.fromList(img.encodeJpg(widget.image, quality: 85));
+    _imageBytes =
+        Uint8List.fromList(img.encodeJpg(widget.image, quality: 85));
   }
 
   void _processCrop() {
@@ -722,7 +776,8 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.check, color: Colors.greenAccent, size: 28),
+            icon:
+                const Icon(Icons.check, color: Colors.greenAccent, size: 28),
             onPressed: _processCrop,
           ),
         ],
@@ -731,14 +786,16 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
         children: [
           Container(
             color: Colors.black87,
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            padding:
+                const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 DropdownButton<String>(
                   value: _selectedFilter,
                   dropdownColor: Colors.black87,
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                  style:
+                      const TextStyle(color: Colors.white, fontSize: 12),
                   items: const [
                     DropdownMenuItem(
                         value: 'magic', child: Text('✨ تبييض سحري')),
@@ -761,7 +818,8 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                       ];
                     });
                   },
-                  icon: const Icon(Icons.center_focus_strong, size: 16),
+                  icon:
+                      const Icon(Icons.center_focus_strong, size: 16),
                   label: const Text('ضبط المربع',
                       style: TextStyle(fontSize: 11)),
                 ),
@@ -793,12 +851,14 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                         child: GestureDetector(
                           onPanUpdate: (details) {
                             setState(() {
-                              final newX = (points[index].dx +
-                                      details.delta.dx / w)
-                                  .clamp(0.0, 1.0);
-                              final newY = (points[index].dy +
-                                      details.delta.dy / h)
-                                  .clamp(0.0, 1.0);
+                              final newX =
+                                  (points[index].dx +
+                                          details.delta.dx / w)
+                                      .clamp(0.0, 1.0);
+                              final newY =
+                                  (points[index].dy +
+                                          details.delta.dy / h)
+                                      .clamp(0.0, 1.0);
                               points[index] = Offset(newX, newY);
                             });
                           },
@@ -808,11 +868,12 @@ class _SmartCropScreenState extends State<SmartCropScreen> {
                             decoration: BoxDecoration(
                               color: const Color(0xFF0284C7),
                               shape: BoxShape.circle,
-                              border:
-                                  Border.all(color: Colors.white, width: 3),
+                              border: Border.all(
+                                  color: Colors.white, width: 3),
                               boxShadow: const [
                                 BoxShadow(
-                                    color: Colors.black54, blurRadius: 4),
+                                    color: Colors.black54,
+                                    blurRadius: 4),
                               ],
                             ),
                           ),
