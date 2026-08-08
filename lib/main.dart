@@ -229,11 +229,11 @@ class _MainScreenState extends State<MainScreen> {
               _tb('مستمسكات', _mode == 'docs', () => setState(() => _mode = 'docs')),
               _tb('صور', _mode == 'photos', () => setState(() => _mode = 'photos')),
               const Spacer(),
-              _tb('قص تلقائي', false, const Color(0xFFF59E0B), _autoCrop),
-              _tb('قص يدوي', false, const Color(0xFF06B6D4), _manualCrop),
-              _tb('ترتيب', false, const Color(0xFF10B981), _aln),
-              _tb('تدوير', false, const Color(0xFF94A3B8), _rot),
-              _tb('نسخ', false, const Color(0xFFA78BFA), _dup),
+              _tb('قص تلقائي', false, _autoCrop, const Color(0xFFF59E0B)),
+              _tb('قص يدوي', false, _manualCrop, const Color(0xFF06B6D4)),
+              _tb('ترتيب', false, _aln, const Color(0xFF10B981)),
+              _tb('تدوير', false, _rot, const Color(0xFF94A3B8)),
+              _tb('نسخ', false, _dup, const Color(0xFFA78BFA)),
             ])),
           Expanded(child: Row(children: [
             // Sidebar
@@ -293,7 +293,7 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Widget _tb(String l, bool sel, [Color? clr, VoidCallback? fn]) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+  Widget _tb(String l, bool sel, VoidCallback fn, [Color? clr]) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
     child: Material(color: Colors.transparent, child: InkWell(onTap: fn, borderRadius: BorderRadius.circular(6),
       child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(color: sel ? (clr ?? const Color(0xFF0284C7)).withOpacity(0.25) : Colors.transparent,
