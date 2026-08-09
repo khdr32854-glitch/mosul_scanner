@@ -6,17 +6,17 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 
 /// ===============================================================
 /// MOSUL SCANNER - CROP ENGINE
-/// Version: 2.0
+/// Version: 2.1
 ///
 /// الوظائف:
-/// 1. قص تلقائي محافظ على كامل المستند.
+/// 1. قص تلقائي للمستند.
 /// 2. كشف زوايا المستند.
 /// 3. تصحيح Perspective / الميلان.
 /// 4. قص يدوي بأربع نقاط.
 /// 5. تحسين الصورة.
 /// 6. أبيض وأسود.
-/// 7. أدوات فك وترميز JPEG.
-/// 8. Google ML Kit Document Scanner wrapper.
+/// 7. فك وترميز JPEG.
+/// 8. Google ML Kit Document Scanner.
 /// ===============================================================
 
 /// ===============================================================
@@ -25,9 +25,12 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 
 class GoogleScanner {
   static Future<List<String>> scan() async {
+    // مهم:
+    // لا نضع const هنا لأن DocumentScannerOptions
+    // في الإصدار الحالي من الحزمة ليس له constructor const.
     final scanner = DocumentScanner(
-      options: const DocumentScannerOptions(
-        documentFormats: <DocumentFormat>{
+      options: DocumentScannerOptions(
+        documentFormats: const <DocumentFormat>{
           DocumentFormat.jpeg,
         },
         pageLimit: 20,
@@ -38,7 +41,10 @@ class GoogleScanner {
 
     try {
       final result = await scanner.scanDocument();
-      return List<String>.from(result.images ?? const <String>[]);
+
+      return List<String>.from(
+        result.images ?? const <String>[],
+      );
     } finally {
       await scanner.close();
     }
@@ -58,7 +64,9 @@ class ImageUtils {
       }
 
       if (bytes is List<int>) {
-        return img.decodeImage(Uint8List.fromList(bytes));
+        return img.decodeImage(
+          Uint8List.fromList(bytes),
+        );
       }
 
       return null;
@@ -72,7 +80,8 @@ class ImageUtils {
     img.Image src, {
     int quality = 92,
   }) {
-    final safeQuality = quality.clamp(1, 100).toInt();
+    final safeQuality =
+        quality.clamp(1, 100).toInt();
 
     try {
       return img.encodeJpg(
@@ -99,7 +108,9 @@ class ImageUtils {
 
   /// التحقق من الصورة.
   static bool isValid(img.Image? image) {
-    if (image == null) return false;
+    if (image == null) {
+      return false;
+    }
 
     return image.width >= 10 &&
         image.height >= 10;
@@ -112,7 +123,7 @@ class ImageUtils {
 }
 
 /// ===============================================================
-/// Enhance
+/// Enhance Mode
 /// ===============================================================
 
 enum EnhanceMode {
@@ -242,7 +253,9 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// القص التلقائي
   /// -----------------------------------------------------------
-  static CropResult detect(img.Image source) {
+  static CropResult detect(
+    img.Image source,
+  ) {
     if (!ImageUtils.isValid(source)) {
       return CropResult(
         image: source.clone(),
@@ -261,7 +274,8 @@ class SmartCrop {
       );
     }
 
-    final result = ManualCrop.cropPerspective(
+    final result =
+        ManualCrop.cropPerspective(
       source,
       corners[0],
       corners[1],
@@ -287,16 +301,17 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// كشف الزوايا
   ///
-  /// يرجع:
-  ///
-  /// TL.x, TL.y,
-  /// TR.x, TR.y,
-  /// BR.x, BR.y,
+  /// الترتيب:
+  /// TL.x, TL.y
+  /// TR.x, TR.y
+  /// BR.x, BR.y
   /// BL.x, BL.y
   ///
   /// القيم normalized من 0 إلى 1.
   /// -----------------------------------------------------------
-  static List<double>? detectCorners(img.Image source) {
+  static List<double>? detectCorners(
+    img.Image source,
+  ) {
     if (!ImageUtils.isValid(source)) {
       return null;
     }
@@ -331,19 +346,20 @@ class SmartCrop {
       return null;
     }
 
-    /// نقاط الحواف الأفقية.
     final topPoints = <_Point>[];
     final bottomPoints = <_Point>[];
 
-    /// نقاط الحواف العمودية.
     final leftPoints = <_Point>[];
     final rightPoints = <_Point>[];
 
     const samples = 90;
 
-    final threshold = _edgeThreshold(
-      small,
-    );
+    final threshold =
+        _edgeThreshold(small);
+
+    /// ---------------------------------------------------------
+    /// البحث عن الحواف العلوية والسفلية
+    /// ---------------------------------------------------------
 
     for (int i = 0; i < samples; i++) {
       final x = ((i + 0.5) * w / samples)
@@ -354,11 +370,19 @@ class SmartCrop {
       var bestTopScore = 0.0;
       var bestTopY = 0;
 
-      final topStart = (h * 0.025).round();
-      final topEnd = (h * 0.62).round();
+      final topStart =
+          (h * 0.025).round();
 
-      for (int y = topStart; y <= topEnd; y++) {
-        final score = _verticalEdge(
+      final topEnd =
+          (h * 0.62).round();
+
+      for (
+        int y = topStart;
+        y <= topEnd;
+        y++
+      ) {
+        final score =
+            _verticalEdge(
           small,
           x,
           y,
@@ -383,11 +407,19 @@ class SmartCrop {
       var bestBottomScore = 0.0;
       var bestBottomY = h - 1;
 
-      final bottomStart = (h * 0.38).round();
-      final bottomEnd = (h * 0.975).round();
+      final bottomStart =
+          (h * 0.38).round();
 
-      for (int y = bottomStart; y <= bottomEnd; y++) {
-        final score = _verticalEdge(
+      final bottomEnd =
+          (h * 0.975).round();
+
+      for (
+        int y = bottomStart;
+        y <= bottomEnd;
+        y++
+      ) {
+        final score =
+            _verticalEdge(
           small,
           x,
           y,
@@ -409,6 +441,10 @@ class SmartCrop {
       }
     }
 
+    /// ---------------------------------------------------------
+    /// البحث عن الحواف اليسرى واليمنى
+    /// ---------------------------------------------------------
+
     for (int i = 0; i < samples; i++) {
       final y = ((i + 0.5) * h / samples)
           .round()
@@ -418,11 +454,19 @@ class SmartCrop {
       var bestLeftScore = 0.0;
       var bestLeftX = 0;
 
-      final leftStart = (w * 0.025).round();
-      final leftEnd = (w * 0.62).round();
+      final leftStart =
+          (w * 0.025).round();
 
-      for (int x = leftStart; x <= leftEnd; x++) {
-        final score = _horizontalEdge(
+      final leftEnd =
+          (w * 0.62).round();
+
+      for (
+        int x = leftStart;
+        x <= leftEnd;
+        x++
+      ) {
+        final score =
+            _horizontalEdge(
           small,
           x,
           y,
@@ -447,11 +491,19 @@ class SmartCrop {
       var bestRightScore = 0.0;
       var bestRightX = w - 1;
 
-      final rightStart = (w * 0.38).round();
-      final rightEnd = (w * 0.975).round();
+      final rightStart =
+          (w * 0.38).round();
 
-      for (int x = rightStart; x <= rightEnd; x++) {
-        final score = _horizontalEdge(
+      final rightEnd =
+          (w * 0.975).round();
+
+      for (
+        int x = rightStart;
+        x <= rightEnd;
+        x++
+      ) {
+        final score =
+            _horizontalEdge(
           small,
           x,
           y,
@@ -473,6 +525,10 @@ class SmartCrop {
       }
     }
 
+    /// ---------------------------------------------------------
+    /// إذا لم توجد نقاط كافية
+    /// ---------------------------------------------------------
+
     if (topPoints.length < 18 ||
         bottomPoints.length < 18 ||
         leftPoints.length < 18 ||
@@ -483,6 +539,10 @@ class SmartCrop {
         scale,
       );
     }
+
+    /// ---------------------------------------------------------
+    /// استخراج الخطوط
+    /// ---------------------------------------------------------
 
     final top = _fitHorizontal(
       topPoints,
@@ -522,6 +582,10 @@ class SmartCrop {
         scale,
       );
     }
+
+    /// ---------------------------------------------------------
+    /// حساب التقاطعات
+    /// ---------------------------------------------------------
 
     final tl = _intersect(
       top,
@@ -565,7 +629,9 @@ class SmartCrop {
       bl.y / h,
     ];
 
-    if (!_validateNormalizedCorners(normalized)) {
+    if (!_validateNormalizedCorners(
+      normalized,
+    )) {
       return _safeRectangleFallback(
         small,
         source,
@@ -573,15 +639,16 @@ class SmartCrop {
       );
     }
 
-    /// تحويل الزوايا من التحليل إلى الصورة الأصلية لا نحتاجه
-    /// لأن ManualCrop يستقبل normalized coordinates.
     return normalized;
   }
 
   /// -----------------------------------------------------------
   /// حساب threshold للحواف
   /// -----------------------------------------------------------
-  static double _edgeThreshold(img.Image image) {
+
+  static double _edgeThreshold(
+    img.Image image,
+  ) {
     final values = <double>[];
 
     final stepX = math.max(
@@ -594,8 +661,16 @@ class SmartCrop {
       image.height ~/ 40,
     );
 
-    for (int y = 2; y < image.height - 2; y += stepY) {
-      for (int x = 2; x < image.width - 2; x += stepX) {
+    for (
+      int y = 2;
+      y < image.height - 2;
+      y += stepY
+    ) {
+      for (
+        int x = 2;
+        x < image.width - 2;
+        x += stepX
+      ) {
         values.add(
           _verticalEdge(
             image,
@@ -632,6 +707,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Vertical edge
   /// -----------------------------------------------------------
+
   static double _verticalEdge(
     img.Image image,
     int x,
@@ -657,6 +733,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Horizontal edge
   /// -----------------------------------------------------------
+
   static double _horizontalEdge(
     img.Image image,
     int x,
@@ -688,6 +765,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Fit horizontal line
   /// -----------------------------------------------------------
+
   static _Line? _fitHorizontal(
     List<_Point> points,
     int width,
@@ -703,11 +781,15 @@ class SmartCrop {
 
     final maxIterations =
         math.min(
-          160,
-          points.length * 3,
-        );
+      160,
+      points.length * 3,
+    );
 
-    for (int i = 0; i < maxIterations; i++) {
+    for (
+      int i = 0;
+      i < maxIterations;
+      i++
+    ) {
       final p1 = points[
         (i * 7) % points.length
       ];
@@ -716,19 +798,21 @@ class SmartCrop {
         (i * 13 + 11) % points.length
       ];
 
-      if ((p1.x - p2.x).abs() < width * 0.08) {
+      if ((p1.x - p2.x).abs() <
+          width * 0.08) {
         continue;
       }
 
       final a =
           (p2.y - p1.y) /
-          (p2.x - p1.x);
+              (p2.x - p1.x);
 
       if (a.abs() > 0.65) {
         continue;
       }
 
-      final b = p1.y - a * p1.x;
+      final b =
+          p1.y - a * p1.x;
 
       int inliers = 0;
 
@@ -737,7 +821,10 @@ class SmartCrop {
             a * p.x + b;
 
         if ((predicted - p.y).abs() <=
-            math.max(2.5, height * 0.012)) {
+            math.max(
+              2.5,
+              height * 0.012,
+            )) {
           inliers++;
         }
       }
@@ -753,7 +840,8 @@ class SmartCrop {
     }
 
     if (best == null ||
-        bestInliers < points.length * 0.22) {
+        bestInliers <
+            points.length * 0.22) {
       return null;
     }
 
@@ -763,6 +851,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Fit vertical line
   /// -----------------------------------------------------------
+
   static _Line? _fitVertical(
     List<_Point> points,
     int width,
@@ -778,11 +867,15 @@ class SmartCrop {
 
     final maxIterations =
         math.min(
-          160,
-          points.length * 3,
-        );
+      160,
+      points.length * 3,
+    );
 
-    for (int i = 0; i < maxIterations; i++) {
+    for (
+      int i = 0;
+      i < maxIterations;
+      i++
+    ) {
       final p1 = points[
         (i * 7) % points.length
       ];
@@ -791,19 +884,21 @@ class SmartCrop {
         (i * 13 + 17) % points.length
       ];
 
-      if ((p1.y - p2.y).abs() < height * 0.08) {
+      if ((p1.y - p2.y).abs() <
+          height * 0.08) {
         continue;
       }
 
       final a =
           (p2.x - p1.x) /
-          (p2.y - p1.y);
+              (p2.y - p1.y);
 
       if (a.abs() > 0.65) {
         continue;
       }
 
-      final b = p1.x - a * p1.y;
+      final b =
+          p1.x - a * p1.y;
 
       int inliers = 0;
 
@@ -812,7 +907,10 @@ class SmartCrop {
             a * p.y + b;
 
         if ((predicted - p.x).abs() <=
-            math.max(2.5, width * 0.012)) {
+            math.max(
+              2.5,
+              width * 0.012,
+            )) {
           inliers++;
         }
       }
@@ -828,7 +926,8 @@ class SmartCrop {
     }
 
     if (best == null ||
-        bestInliers < points.length * 0.22) {
+        bestInliers <
+            points.length * 0.22) {
       return null;
     }
 
@@ -838,6 +937,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Line intersection
   /// -----------------------------------------------------------
+
   static _Point? _intersect(
     _Line horizontal,
     _Line vertical,
@@ -854,18 +954,20 @@ class SmartCrop {
     final denominator =
         1.0 - av * ah;
 
-    if (denominator.abs() < 0.000001) {
+    if (denominator.abs() <
+        0.000001) {
       return null;
     }
 
     final x =
         (av * bh + bv) /
-        denominator;
+            denominator;
 
     final y =
         ah * x + bh;
 
-    if (!x.isFinite || !y.isFinite) {
+    if (!x.isFinite ||
+        !y.isFinite) {
       return null;
     }
 
@@ -878,6 +980,7 @@ class SmartCrop {
   /// -----------------------------------------------------------
   /// Validation
   /// -----------------------------------------------------------
+
   static bool _validateNormalizedCorners(
     List<double> p,
   ) {
@@ -927,27 +1030,27 @@ class SmartCrop {
 
     final widthTop =
         _distance(
-          tl,
-          tr,
-        );
+      tl,
+      tr,
+    );
 
     final widthBottom =
         _distance(
-          bl,
-          br,
-        );
+      bl,
+      br,
+    );
 
     final heightLeft =
         _distance(
-          tl,
-          bl,
-        );
+      tl,
+      bl,
+    );
 
     final heightRight =
         _distance(
-          tr,
-          br,
-        );
+      tr,
+      br,
+    );
 
     if (widthTop < 0.12 ||
         widthBottom < 0.12 ||
@@ -974,15 +1077,15 @@ class SmartCrop {
 
   /// -----------------------------------------------------------
   /// Fallback محافظ
-  ///
-  /// لا نقص الصورة بشكل عشوائي.
   /// -----------------------------------------------------------
+
   static List<double>? _safeRectangleFallback(
     img.Image small,
     img.Image source,
     double scale,
   ) {
-    final box = _findForegroundBox(
+    final box =
+        _findForegroundBox(
       small,
     );
 
@@ -1013,7 +1116,9 @@ class SmartCrop {
       bottom,
     ];
 
-    if (!_validateNormalizedCorners(result)) {
+    if (!_validateNormalizedCorners(
+      result,
+    )) {
       return null;
     }
 
@@ -1022,9 +1127,8 @@ class SmartCrop {
 
   /// -----------------------------------------------------------
   /// Foreground box
-  ///
-  /// fallback فقط، وليس الاختيار الأول.
   /// -----------------------------------------------------------
+
   static List<int>? _findForegroundBox(
     img.Image image,
   ) {
@@ -1039,9 +1143,9 @@ class SmartCrop {
 
     final borderStep =
         math.max(
-          1,
-          math.min(w, h) ~/ 50,
-        );
+      1,
+      math.min(w, h) ~/ 50,
+    );
 
     for (
       int x = 0;
@@ -1102,14 +1206,15 @@ class SmartCrop {
           borderValues.length ~/ 2
         ];
 
-    final threshold = 22.0;
+    const threshold = 22.0;
 
     int minX = w;
     int minY = h;
     int maxX = -1;
     int maxY = -1;
 
-    final step = math.max(
+    final step =
+        math.max(
       1,
       math.min(w, h) ~/ 180,
     );
@@ -1124,14 +1229,16 @@ class SmartCrop {
         x < w - 2;
         x += step
       ) {
-        final l = _lum(
+        final l =
+            _lum(
           image.getPixel(
             x,
             y,
           ),
         );
 
-        if ((l - bg).abs() > threshold) {
+        if ((l - bg).abs() >
+            threshold) {
           minX = math.min(
             minX,
             x,
@@ -1170,8 +1277,7 @@ class SmartCrop {
       return null;
     }
 
-    /// لا نسمح fallback بقص قريب جدًا من الحافة
-    /// إذا كان الكشف غير واضح.
+    /// لا نقص إذا كان الكشف قريباً جداً من كامل الإطار.
     if (minX < w * _maxMargin &&
         maxX > w * (1.0 - _maxMargin) &&
         minY < h * _maxMargin &&
@@ -1192,7 +1298,11 @@ class SmartCrop {
   ) {
     double sum = 0;
 
-    for (int i = 0; i < p.length; i++) {
+    for (
+      int i = 0;
+      i < p.length;
+      i++
+    ) {
       final j =
           (i + 1) % p.length;
 
@@ -1237,6 +1347,7 @@ class ManualCrop {
   /// 3 BR
   /// 4 BL
   /// -----------------------------------------------------------
+
   static img.Image cropPerspective(
     img.Image source,
     double x1,
@@ -1302,54 +1413,54 @@ class ManualCrop {
 
     final topWidth =
         _distance(
-          tl,
-          tr,
-        );
+      tl,
+      tr,
+    );
 
     final bottomWidth =
         _distance(
-          bl,
-          br,
-        );
+      bl,
+      br,
+    );
 
     final leftHeight =
         _distance(
-          tl,
-          bl,
-        );
+      tl,
+      bl,
+    );
 
     final rightHeight =
         _distance(
-          tr,
-          br,
-        );
+      tr,
+      br,
+    );
 
     int outWidth =
         math.max(
-          1,
-          ((topWidth +
+      1,
+      ((topWidth +
                   bottomWidth) /
               2)
-              .round(),
-        );
+          .round(),
+    );
 
     int outHeight =
         math.max(
-          1,
-          ((leftHeight +
+      1,
+      ((leftHeight +
                   rightHeight) /
               2)
-              .round(),
-        );
+          .round(),
+    );
 
-    /// حماية من صور ضخمة جدًا.
+    /// حماية من صور ضخمة جداً.
     const maxDimension = 3200;
 
     final longest =
         math.max(
-          outWidth,
-          outHeight,
-        );
+      outWidth,
+      outHeight,
+    );
 
     if (longest > maxDimension) {
       final factor =
@@ -1357,23 +1468,23 @@ class ManualCrop {
 
       outWidth =
           math.max(
-            1,
-            (outWidth * factor)
-                .round(),
-          );
+        1,
+        (outWidth * factor).round(),
+      );
 
       outHeight =
           math.max(
-            1,
-            (outHeight * factor)
-                .round(),
-          );
+        1,
+        (outHeight * factor).round(),
+      );
     }
 
-    /// حساب Homography:
-    ///
-    /// source -> destination
-    final h = _computeHomography(
+    /// ---------------------------------------------------------
+    /// حساب Homography
+    /// ---------------------------------------------------------
+
+    final h =
+        _computeHomography(
       <_Point>[
         tl,
         tr,
@@ -1407,7 +1518,6 @@ class ManualCrop {
       numChannels: 3,
     );
 
-    /// تحويل inverse:
     /// destination -> source
     final inverse =
         _invertHomography(h);
@@ -1415,6 +1525,10 @@ class ManualCrop {
     if (inverse == null) {
       return source.clone();
     }
+
+    /// ---------------------------------------------------------
+    /// إعادة إسقاط الصورة
+    /// ---------------------------------------------------------
 
     for (
       int y = 0;
@@ -1441,6 +1555,7 @@ class ManualCrop {
             255,
             255,
           );
+
           continue;
         }
 
@@ -1449,8 +1564,10 @@ class ManualCrop {
 
         if (sx < 0 ||
             sy < 0 ||
-            sx > source.width - 1 ||
-            sy > source.height - 1) {
+            sx >
+                source.width - 1 ||
+            sy >
+                source.height - 1) {
           output.setPixelRgb(
             x,
             y,
@@ -1458,6 +1575,7 @@ class ManualCrop {
             255,
             255,
           );
+
           continue;
         }
 
@@ -1483,6 +1601,7 @@ class ManualCrop {
   /// -----------------------------------------------------------
   /// Quad validation
   /// -----------------------------------------------------------
+
   static bool _validQuad(
     List<_Point> p,
   ) {
@@ -1490,17 +1609,16 @@ class ManualCrop {
       return false;
     }
 
-    final area =
-        _area(p);
+    final area = _area(p);
 
     if (area <
         0.01 *
             math.max(
               1,
               _distance(
-                p[0],
-                p[1],
-              ) *
+                    p[0],
+                    p[1],
+                  ) *
                   _distance(
                     p[1],
                     p[2],
@@ -1511,20 +1629,24 @@ class ManualCrop {
 
     final signs = <double>[];
 
-    for (int i = 0; i < 4; i++) {
+    for (
+      int i = 0;
+      i < 4;
+      i++
+    ) {
       final a = p[i];
-      final b = p[
-        (i + 1) % 4
-      ];
-      final c = p[
-        (i + 2) % 4
-      ];
+
+      final b =
+          p[(i + 1) % 4];
+
+      final c =
+          p[(i + 2) % 4];
 
       final cross =
           (b.x - a.x) *
-              (c.y - b.y) -
-          (b.y - a.y) *
-              (c.x - b.x);
+                  (c.y - b.y) -
+              (b.y - a.y) *
+                  (c.x - b.x);
 
       signs.add(cross);
     }
@@ -1552,7 +1674,11 @@ class ManualCrop {
   ) {
     double value = 0;
 
-    for (int i = 0; i < p.length; i++) {
+    for (
+      int i = 0;
+      i < p.length;
+      i++
+    ) {
       final j =
           (i + 1) % p.length;
 
@@ -1571,6 +1697,7 @@ class ManualCrop {
   /// h0..h7
   /// h8 = 1
   /// -----------------------------------------------------------
+
   static List<double>? _computeHomography(
     List<_Point> src,
     List<_Point> dst,
@@ -1583,15 +1710,21 @@ class ManualCrop {
     final a =
         List.generate(
       8,
-      (_) => List<double>.filled(
+      (_) =>
+          List<double>.filled(
         9,
         0,
       ),
     );
 
-    for (int i = 0; i < 4; i++) {
+    for (
+      int i = 0;
+      i < 4;
+      i++
+    ) {
       final x = src[i].x;
       final y = src[i].y;
+
       final u = dst[i].x;
       final v = dst[i].y;
 
@@ -1601,9 +1734,11 @@ class ManualCrop {
       a[r1][0] = x;
       a[r1][1] = y;
       a[r1][2] = 1;
+
       a[r1][3] = 0;
       a[r1][4] = 0;
       a[r1][5] = 0;
+
       a[r1][6] = -u * x;
       a[r1][7] = -u * y;
       a[r1][8] = u;
@@ -1611,16 +1746,25 @@ class ManualCrop {
       a[r2][0] = 0;
       a[r2][1] = 0;
       a[r2][2] = 0;
+
       a[r2][3] = x;
       a[r2][4] = y;
       a[r2][5] = 1;
+
       a[r2][6] = -v * x;
       a[r2][7] = -v * y;
       a[r2][8] = v;
     }
 
-    /// Gaussian elimination.
-    for (int col = 0; col < 8; col++) {
+    /// ---------------------------------------------------------
+    /// Gaussian elimination
+    /// ---------------------------------------------------------
+
+    for (
+      int col = 0;
+      col < 8;
+      col++
+    ) {
       int pivot = col;
 
       for (
@@ -1641,6 +1785,7 @@ class ManualCrop {
 
       if (pivot != col) {
         final tmp = a[pivot];
+
         a[pivot] = a[col];
         a[col] = tmp;
       }
@@ -1701,15 +1846,22 @@ class ManualCrop {
   /// -----------------------------------------------------------
   /// Invert 3x3 Homography
   /// -----------------------------------------------------------
+
   static List<double>? _invertHomography(
     List<double> h,
   ) {
+    if (h.length != 9) {
+      return null;
+    }
+
     final a = h[0];
     final b = h[1];
     final c = h[2];
+
     final d = h[3];
     final e = h[4];
     final f = h[5];
+
     final g = h[6];
     final i = h[7];
     final j = h[8];
@@ -1746,11 +1898,12 @@ class ManualCrop {
         b * B +
         c * C;
 
-    if (det.abs() < 1e-12) {
+    if (det.abs() <
+        1e-12) {
       return null;
     }
 
-    final inv = <double>[
+    return <double>[
       A / det,
       D / det,
       G / det,
@@ -1761,18 +1914,21 @@ class ManualCrop {
       F / det,
       I / det,
     ];
-
-    return inv;
   }
 
   /// -----------------------------------------------------------
   /// Map point through 3x3 matrix
   /// -----------------------------------------------------------
+
   static _Point? _mapPoint(
     List<double> h,
     double x,
     double y,
   ) {
+    if (h.length != 9) {
+      return null;
+    }
+
     final denominator =
         h[6] * x +
         h[7] * y +
@@ -1793,9 +1949,20 @@ class ManualCrop {
         h[4] * y +
         h[5];
 
+    final mappedX =
+        nx / denominator;
+
+    final mappedY =
+        ny / denominator;
+
+    if (!mappedX.isFinite ||
+        !mappedY.isFinite) {
+      return null;
+    }
+
     return _Point(
-      nx / denominator,
-      ny / denominator,
+      mappedX,
+      mappedY,
     );
   }
 
