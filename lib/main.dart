@@ -109,6 +109,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final decoded = ImageUtils.decodeBytes(raw);
         if (decoded == null) continue;
         final encoded = Uint8List.fromList(ImageUtils.encodeJpg(decoded));
+        if (!mounted) return;
         setState(() {
           final item = DocumentItem(
             id: 'gs_${DateTime.now().millisecondsSinceEpoch}_$i',
@@ -145,6 +146,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
       if (decodedImg != null) {
         final encodedBytes = Uint8List.fromList(ImageUtils.encodeJpg(decodedImg));
+        if (!mounted) return;
         setState(() {
           final newItem = DocumentItem(
             id: '${DateTime.now().millisecondsSinceEpoch}_$i',
