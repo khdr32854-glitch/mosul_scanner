@@ -2,78 +2,32 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
-/// ===============================================================
-/// 1. Google ML Kit Scanner
-/// ===============================================================
-class GoogleScanner {
-  static Future<List<String>?> scan() async {
-    final scanner = DocumentScanner(
-      options: DocumentScannerOptions(
-        documentFormats: const {DocumentFormat.jpeg},
-        pageLimit: 10,
-        mode: ScannerMode.full,
-        isGalleryImport: true,
-      ),
-    );
-
-    try {
-      final result = await scanner.scanDocument();
-      return result.images;
-    } catch (e) {
-      debugPrint('Google Scanner Error: $e');
-      return null;
-    } finally {
-      await scanner.close();
-    }
-  }
-}
-
-/// ===============================================================
-/// 2. Image Utilities
-/// ===============================================================
+/// أدوات الصورة والمعالجة
 class ImageUtils {
   static img.Image? decodeBytes(Uint8List bytes) {
-    try {
-      return img.decodeImage(bytes);
-    } catch (_) {
-      return null;
-    }
+    try { return img.decodeImage(bytes); } catch (_) { return null; }
   }
 
-  static List<int> encodeJpg(img.Image image, {int quality = 92}) {
-    try {
-      return img.encodeJpg(image, quality: quality);
-    } catch (_) {
-      return [];
-    }
+  static List<int> encodeJpg(img.Image image, {int quality = 95}) {
+    try { return img.encodeJpg(image, quality: quality); } catch (_) { return []; }
   }
 
   static bool isValid(img.Image? image) {
-    if (image == null) return false;
-    return image.width >= 10 && image.height >= 10;
+    return image != null && image.width > 20 && image.height > 20;
   }
 }
 
-/// ===============================================================
-/// 3. Crop Result Model
-/// ===============================================================
+/// نتيجة القص
 class CropResult {
   final img.Image image;
   final bool changed;
   final double confidence;
 
-  const CropResult({
-    required this.image,
-    required this.changed,
-    required this.confidence,
-  });
+  const CropResult({required this.image, required this.changed, required this.confidence});
 }
 
-/// ===============================================================
-/// 4. Image Enhancer
-/// ===============================================================
+/// فلاتر CamScanner السحرية (Magic Color / B&W / Original)
 enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
@@ -82,26 +36,34 @@ class ImageEnhancer {
     switch (mode) {
       case EnhanceMode.none:
         return image;
+
       case EnhanceMode.soft:
-        try {
-          return img.adjustColor(image, contrast: 1.12, brightness: 1.04, saturation: 1.03);
-        } catch (_) {
-          return image;
+        // فلتر اللون السحري (Magic Color): زيادة السطوع مع تباين عالي لتصفية الخففيات
+        for (var frame in image.frames) {
+          for (var p in frame) {
+            num r = p.r * 1.2;
+            num g = p.g * 1.2;
+            num b = p.b * 1.2;
+            // تنظيف الخلفيات البيضاء والرمادية
+            if (r > 180 && g > 180 && b > 180) {
+              r = 255; g = 255; b = 255;
+            }
+            p.r = r.clamp(0, 255);
+            p.g = g.clamp(0, 255);
+            p.b = b.clamp(0, 255);
+          }
         }
+        return image;
+
       case EnhanceMode.bw:
-        try {
-          final gray = img.grayscale(image);
-          return img.adjustColor(gray, contrast: 1.22, brightness: 1.03);
-        } catch (_) {
-          return image;
-        }
+        // أبيض وأسود عالي التباين للمستندات والختومات
+        final gray = img.grayscale(image);
+        return img.adjustColor(gray, contrast: 1.4, brightness: 1.1);
     }
   }
 }
 
-/// ===============================================================
-/// 5. Manual Perspective Crop
-/// ===============================================================
+/// القص اليدوي وتعديل المنظور
 class ManualCrop {
   static img.Image cropPerspective(
     img.Image source,
@@ -120,36 +82,9 @@ class ManualCrop {
     final minY = (math.min(math.min(y1, y2), math.min(y3, y4)) * h).toInt().clamp(0, source.height - 1);
     final maxY = (math.max(math.max(y1, y2), math.max(y3, y4)) * h).toInt().clamp(1, source.height);
 
-    final cropW = math.max(10, maxX - minX);
-    final cropH = math.max(10, maxY - minY);
+    final cropW = math.max(20, maxX - minX);
+    final cropH = math.max(20, maxY - minY);
 
     return img.copyCrop(source, x: minX, y: minY, width: cropW, height: cropH);
-  }
-}
-
-/// ===============================================================
-/// 6. Smart Crop Fallback
-/// ===============================================================
-class SmartCrop {
-  static CropResult detect(img.Image source) {
-    if (!ImageUtils.isValid(source)) {
-      return CropResult(image: img.Image.from(source), changed: false, confidence: 0);
-    }
-
-    const margin = 0.01;
-    final cropped = ManualCrop.cropPerspective(
-      source,
-      margin, margin,
-      1.0 - margin, margin,
-      1.0 - margin, 1.0 - margin,
-      margin, 1.0 - margin,
-    );
-
-    return CropResult(image: cropped, changed: true, confidence: 0.85);
-  }
-
-  static List<double>? detectCorners(img.Image source) {
-    if (!ImageUtils.isValid(source)) return null;
-    return [0.05, 0.05, 0.95, 0.05, 0.95, 0.95, 0.05, 0.95];
   }
 }
