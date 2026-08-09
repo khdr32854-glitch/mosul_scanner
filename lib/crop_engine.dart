@@ -5,17 +5,18 @@ import 'package:image/image.dart' as img;
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 /// ===============================================================
-/// crop_engine.dart
 /// Mosul Scanner
+/// crop_engine.dart
 ///
-/// الوظائف:
-/// 1. القص الذكي Smart Crop
-/// 2. تصحيح المنظور Perspective Warp
-/// 3. القص اليدوي
-/// 4. Google ML Kit Document Scanner
-/// 5. تحسين الصورة ImageEnhancer
-/// 6. أدوات فك وترميز الصور
+/// محرك قص المستندات:
+/// - Auto document detection
+/// - Perspective correction
+/// - Manual crop
+/// - Rotation
+/// - Image filters
+/// - JPEG encode/decode
 ///
+/// لا يعتمد على OpenCV.
 /// متوافق مع:
 /// image: ^4.2.0
 /// google_mlkit_document_scanner: ^0.5.0
@@ -28,27 +29,144 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 class CropResult {
   final img.Image image;
   final bool changed;
+  final DocumentCorners? corners;
 
   const CropResult({
     required this.image,
     required this.changed,
+    this.corners,
   });
 }
 
 /// ===============================================================
-/// أوضاع تحسين الصورة
+/// EnhanceMode
 /// ===============================================================
 
 enum EnhanceMode {
   none,
   soft,
   bw,
+  gray,
+  document,
 }
 
 /// ===============================================================
-/// Perspective Warp
+/// DocumentCorners
 ///
-/// يحول أربع نقاط من الصورة الأصلية إلى مستطيل مستقيم.
+/// النسب دائماً من 0 إلى 1.
+/// الترتيب:
+///
+/// TL = أعلى يسار
+/// TR = أعلى يمين
+/// BR = أسفل يمين
+/// BL = أسفل يسار
+/// ===============================================================
+
+class DocumentCorners {
+  final double tlX;
+  final double tlY;
+
+  final double trX;
+  final double trY;
+
+  final double brX;
+  final double brY;
+
+  final double blX;
+  final double blY;
+
+  const DocumentCorners({
+    required this.tlX,
+    required this.tlY,
+    required this.trX,
+    required this.trY,
+    required this.brX,
+    required this.brY,
+    required this.blX,
+    required this.blY,
+  });
+
+  DocumentCorners copyWith({
+    double? tlX,
+    double? tlY,
+    double? trX,
+    double? trY,
+    double? brX,
+    double? brY,
+    double? blX,
+    double? blY,
+  }) {
+    return DocumentCorners(
+      tlX: tlX ?? this.tlX,
+      tlY: tlY ?? this.tlY,
+      trX: trX ?? this.trX,
+      trY: trY ?? this.trY,
+      brX: brX ?? this.brX,
+      brY: brY ?? this.brY,
+      blX: blX ?? this.blX,
+      blY: blY ?? this.blY,
+    );
+  }
+
+  List<double> toList() {
+    return [
+      tlX,
+      tlY,
+      trX,
+      trY,
+      brX,
+      brY,
+      blX,
+      blY,
+    ];
+  }
+
+  static DocumentCorners fromPixels(
+    double tlX,
+    double tlY,
+    double trX,
+    double trY,
+    double brX,
+    double brY,
+    double blX,
+    double blY,
+    int width,
+    int height,
+  ) {
+    return DocumentCorners(
+      tlX: tlX / width,
+      tlY: tlY / height,
+      trX: trX / width,
+      trY: trY / height,
+      brX: brX / width,
+      brY: brY / height,
+      blX: blX / width,
+      blY: blY / height,
+    );
+  }
+
+  DocumentCorners clamp() {
+    return DocumentCorners(
+      tlX: _clamp01(tlX),
+      tlY: _clamp01(tlY),
+      trX: _clamp01(trX),
+      trY: _clamp01(trY),
+      brX: _clamp01(brX),
+      brY: _clamp01(brY),
+      blX: _clamp01(blX),
+      blY: _clamp01(blY),
+    );
+  }
+
+  static double _clamp01(double v) {
+    return v.clamp(0.0, 1.0).toDouble();
+  }
+}
+
+/// ===============================================================
+/// PerspectiveWarp
+///
+/// تحويل أربعة أركان إلى مستطيل مستقيم.
 /// ===============================================================
 
 class PerspectiveWarp {
@@ -63,7 +181,7 @@ class PerspectiveWarp {
     double x4,
     double y4,
   ) {
-    final pts = _orderPoints(
+    final points = _orderPoints(
       x1,
       y1,
       x2,
@@ -74,71 +192,108 @@ class PerspectiveWarp {
       y4,
     );
 
-    final w1 = _distance(
-      pts[0],
-      pts[1],
-      pts[2],
-      pts[3],
+    final tlX = points[0];
+    final tlY = points[1];
+
+    final trX = points[2];
+    final trY = points[3];
+
+    final brX = points[4];
+    final brY = points[5];
+
+    final blX = points[6];
+    final blY = points[7];
+
+    final topWidth = _distance(
+      tlX,
+      tlY,
+      trX,
+      trY,
     );
 
-    final w2 = _distance(
-      pts[6],
-      pts[7],
-      pts[4],
-      pts[5],
+    final bottomWidth = _distance(
+      blX,
+      blY,
+      brX,
+      brY,
     );
 
-    final h1 = _distance(
-      pts[0],
-      pts[1],
-      pts[6],
-      pts[7],
+    final leftHeight = _distance(
+      tlX,
+      tlY,
+      blX,
+      blY,
     );
 
-    final h2 = _distance(
-      pts[2],
-      pts[3],
-      pts[4],
-      pts[5],
+    final rightHeight = _distance(
+      trX,
+      trY,
+      brX,
+      brY,
     );
 
-    final maxW = max(w1, w2).round();
-    final maxH = max(h1, h2).round();
+    int outputWidth = max(
+      20,
+      max(
+        topWidth.round(),
+        bottomWidth.round(),
+      ),
+    );
 
-    if (maxW < 10 || maxH < 10) {
-      return src;
+    int outputHeight = max(
+      20,
+      max(
+        leftHeight.round(),
+        rightHeight.round(),
+      ),
+    );
+
+    /// منع إنتاج صور ضخمة جداً.
+    const maxDimension = 5000;
+
+    if (outputWidth > maxDimension ||
+        outputHeight > maxDimension) {
+      final scale = min(
+        maxDimension / outputWidth,
+        maxDimension / outputHeight,
+      );
+
+      outputWidth = max(
+        20,
+        (outputWidth * scale).round(),
+      );
+
+      outputHeight = max(
+        20,
+        (outputHeight * scale).round(),
+      );
     }
 
-    final result = img.Image(
-      width: maxW,
-      height: maxH,
-    );
-
-    final srcPts = <double>[
-      pts[0],
-      pts[1],
-      pts[2],
-      pts[3],
-      pts[4],
-      pts[5],
-      pts[6],
-      pts[7],
+    final srcPoints = <double>[
+      tlX,
+      tlY,
+      trX,
+      trY,
+      brX,
+      brY,
+      blX,
+      blY,
     ];
 
-    final dstPts = <double>[
-      0.0,
-      0.0,
-      maxW - 1.0,
-      0.0,
-      maxW - 1.0,
-      maxH - 1.0,
-      0.0,
-      maxH - 1.0,
+    final dstPoints = <double>[
+      0,
+      0,
+      outputWidth - 1.0,
+      0,
+      outputWidth - 1.0,
+      outputHeight - 1.0,
+      0,
+      outputHeight - 1.0,
     ];
 
     final matrix = _getPerspectiveTransform(
-      srcPts,
-      dstPts,
+      srcPoints,
+      dstPoints,
     );
 
     if (matrix == null) {
@@ -151,8 +306,13 @@ class PerspectiveWarp {
       return src;
     }
 
-    for (int y = 0; y < maxH; y++) {
-      for (int x = 0; x < maxW; x++) {
+    final result = img.Image(
+      width: outputWidth,
+      height: outputHeight,
+    );
+
+    for (int y = 0; y < outputHeight; y++) {
+      for (int x = 0; x < outputWidth; x++) {
         final w =
             inverse[0][0] * x +
             inverse[0][1] * y +
@@ -168,21 +328,22 @@ class PerspectiveWarp {
             inverse[2][1] * y +
             inverse[2][2];
 
-        if (q.abs() < 0.000001) {
+        if (q.abs() < 0.0000001) {
           continue;
         }
 
-        final sx = (w / q).round();
-        final sy = (v / q).round();
+        final sx = w / q;
+        final sy = v / q;
 
         if (sx < 0 ||
-            sx >= src.width ||
             sy < 0 ||
-            sy >= src.height) {
+            sx >= src.width - 1 ||
+            sy >= src.height - 1) {
           continue;
         }
 
-        final p = src.getPixel(
+        final color = _bilinear(
+          src,
           sx,
           sy,
         );
@@ -190,10 +351,10 @@ class PerspectiveWarp {
         result.setPixelRgba(
           x,
           y,
-          p.r,
-          p.g,
-          p.b,
-          p.a,
+          color[0],
+          color[1],
+          color[2],
+          color[3],
         );
       }
     }
@@ -201,27 +362,92 @@ class PerspectiveWarp {
     return result;
   }
 
-  /// حساب المسافة بين نقطتين.
+  static List<int> _bilinear(
+    img.Image source,
+    double x,
+    double y,
+  ) {
+    final x0 = x.floor();
+    final y0 = y.floor();
+
+    final x1 = min(
+      x0 + 1,
+      source.width - 1,
+    );
+
+    final y1 = min(
+      y0 + 1,
+      source.height - 1,
+    );
+
+    final fx = x - x0;
+    final fy = y - y0;
+
+    final p00 = source.getPixel(x0, y0);
+    final p10 = source.getPixel(x1, y0);
+    final p01 = source.getPixel(x0, y1);
+    final p11 = source.getPixel(x1, y1);
+
+    int mix(
+      int a,
+      int b,
+      int c,
+      int d,
+    ) {
+      final top =
+          a * (1 - fx) +
+          b * fx;
+
+      final bottom =
+          c * (1 - fx) +
+          d * fx;
+
+      return (
+        top * (1 - fy) +
+        bottom * fy
+      ).round().clamp(0, 255);
+    }
+
+    return [
+      mix(
+        p00.r.toInt(),
+        p10.r.toInt(),
+        p01.r.toInt(),
+        p11.r.toInt(),
+      ),
+      mix(
+        p00.g.toInt(),
+        p10.g.toInt(),
+        p01.g.toInt(),
+        p11.g.toInt(),
+      ),
+      mix(
+        p00.b.toInt(),
+        p10.b.toInt(),
+        p01.b.toInt(),
+        p11.b.toInt(),
+      ),
+      mix(
+        p00.a.toInt(),
+        p10.a.toInt(),
+        p01.a.toInt(),
+        p11.a.toInt(),
+      ),
+    ];
+  }
+
   static double _distance(
     double x1,
     double y1,
     double x2,
     double y2,
   ) {
-    final dx = x2 - x1;
-    final dy = y2 - y1;
-
     return sqrt(
-      dx * dx + dy * dy,
+      pow(x2 - x1, 2) +
+      pow(y2 - y1, 2),
     );
   }
 
-  /// ترتيب النقاط:
-  ///
-  /// 0 = Top Left
-  /// 1 = Top Right
-  /// 2 = Bottom Right
-  /// 3 = Bottom Left
   static List<double> _orderPoints(
     double x1,
     double y1,
@@ -239,54 +465,41 @@ class PerspectiveWarp {
       [x4, y4],
     ];
 
-    List<double> topLeft = points.first;
-    List<double> topRight = points.first;
-    List<double> bottomRight = points.first;
-    List<double> bottomLeft = points.first;
+    /// استعمال مجموع وإحداثي الفرق
+    /// يجعل الترتيب أكثر ثباتاً مع الدوران.
+    points.sort(
+      (a, b) => (a[0] + a[1])
+          .compareTo(b[0] + b[1]),
+    );
 
-    double minSum = double.infinity;
-    double maxSum = -double.infinity;
-    double minDiff = double.infinity;
-    double maxDiff = -double.infinity;
+    final tl = points[0];
+    final br = points[3];
 
-    for (final p in points) {
-      final sum = p[0] + p[1];
-      final diff = p[0] - p[1];
+    final remaining = [
+      points[1],
+      points[2],
+    ];
 
-      if (sum < minSum) {
-        minSum = sum;
-        topLeft = p;
-      }
+    remaining.sort(
+      (a, b) => (a[0] - a[1])
+          .compareTo(b[0] - b[1]),
+    );
 
-      if (sum > maxSum) {
-        maxSum = sum;
-        bottomRight = p;
-      }
+    final tr = remaining[1];
+    final bl = remaining[0];
 
-      if (diff > maxDiff) {
-        maxDiff = diff;
-        topRight = p;
-      }
-
-      if (diff < minDiff) {
-        minDiff = diff;
-        bottomLeft = p;
-      }
-    }
-
-    return <double>[
-      topLeft[0],
-      topLeft[1],
-      topRight[0],
-      topRight[1],
-      bottomRight[0],
-      bottomRight[1],
-      bottomLeft[0],
-      bottomLeft[1],
+    return [
+      tl[0],
+      tl[1],
+      tr[0],
+      tr[1],
+      br[0],
+      br[1],
+      bl[0],
+      bl[1],
     ];
   }
 
-  /// حساب مصفوفة Perspective 3x3.
   static List<List<double>>? _getPerspectiveTransform(
     List<double> src,
     List<double> dst,
@@ -300,13 +513,13 @@ class PerspectiveWarp {
       8,
       (_) => List<double>.filled(
         8,
-        0.0,
+        0,
       ),
     );
 
     final b = List<double>.filled(
       8,
-      0.0,
+      0,
     );
 
     for (int i = 0; i < 4; i++) {
@@ -316,26 +529,26 @@ class PerspectiveWarp {
       final dx = dst[i * 2];
       final dy = dst[i * 2 + 1];
 
-      final r1 = i * 2;
-      final r2 = r1 + 1;
+      final row1 = i * 2;
+      final row2 = row1 + 1;
 
-      a[r1][0] = sx;
-      a[r1][1] = sy;
-      a[r1][2] = 1.0;
+      a[row1][0] = sx;
+      a[row1][1] = sy;
+      a[row1][2] = 1;
 
-      a[r1][6] = -dx * sx;
-      a[r1][7] = -dx * sy;
+      a[row1][6] = -dx * sx;
+      a[row1][7] = -dx * sy;
 
-      b[r1] = dx;
+      b[row1] = dx;
 
-      a[r2][3] = sx;
-      a[r2][4] = sy;
-      a[r2][5] = 1.0;
+      a[row2][3] = sx;
+      a[row2][4] = sy;
+      a[row2][5] = 1;
 
-      a[r2][6] = -dy * sx;
-      a[r2][7] = -dy * sy;
+      a[row2][6] = -dy * sx;
+      a[row2][7] = -dy * sy;
 
-      b[r2] = dy;
+      b[row2] = dy;
     }
 
     final h = _solveLinear(
@@ -343,91 +556,70 @@ class PerspectiveWarp {
       b,
     );
 
-    if (h == null ||
-        h.length != 8) {
+    if (h == null) {
       return null;
     }
 
-    return <List<double>>[
-      [
-        h[0],
-        h[1],
-        h[2],
-      ],
-      [
-        h[3],
-        h[4],
-        h[5],
-      ],
-      [
-        h[6],
-        h[7],
-        1.0,
-      ],
+    return [
+      [h[0], h[1], h[2]],
+      [h[3], h[4], h[5]],
+      [h[6], h[7], 1],
     ];
   }
 
-  /// حل نظام المعادلات باستخدام Gaussian Elimination.
   static List<double>? _solveLinear(
-    List<List<double>> matrix,
-    List<double> values,
+    List<List<double>> a,
+    List<double> b,
   ) {
-    final n = matrix.length;
+    final n = a.length;
 
-    if (n == 0 ||
-        values.length != n) {
-      return null;
-    }
-
-    final augmented = List.generate(
+    final matrix = List.generate(
       n,
-      (i) => <double>[
-        ...matrix[i],
-        values[i],
+      (i) => [
+        ...a[i],
+        b[i],
       ],
     );
 
     for (int col = 0; col < n; col++) {
-      int pivotRow = col;
+      int pivot = col;
 
       for (int row = col + 1;
           row < n;
           row++) {
-        if (augmented[row][col].abs() >
-            augmented[pivotRow][col].abs()) {
-          pivotRow = row;
+        if (matrix[row][col].abs() >
+            matrix[pivot][col].abs()) {
+          pivot = row;
         }
       }
 
-      if (augmented[pivotRow][col].abs() <
+      if (matrix[pivot][col].abs() <
           1e-12) {
         return null;
       }
 
-      if (pivotRow != col) {
-        final temp = augmented[col];
-        augmented[col] = augmented[pivotRow];
-        augmented[pivotRow] = temp;
+      if (pivot != col) {
+        final temp = matrix[col];
+        matrix[col] = matrix[pivot];
+        matrix[pivot] = temp;
       }
 
       for (int row = col + 1;
           row < n;
           row++) {
-        final divisor =
-            augmented[col][col];
-
-        if (divisor.abs() < 1e-12) {
-          return null;
-        }
-
         final factor =
-            augmented[row][col] / divisor;
+            matrix[row][col] /
+            matrix[col][col];
+
+        if (factor == 0) {
+          continue;
+        }
 
         for (int j = col;
             j <= n;
             j++) {
-          augmented[row][j] -=
-              factor * augmented[col][j];
+          matrix[row][j] -=
+              factor * matrix[col][j];
         }
       }
     }
@@ -435,46 +627,39 @@ class PerspectiveWarp {
     final result =
         List<double>.filled(
       n,
-      0.0,
+      0,
     );
 
     for (int i = n - 1;
         i >= 0;
         i--) {
       double value =
-          augmented[i][n];
+          matrix[i][n];
 
       for (int j = i + 1;
           j < n;
           j++) {
         value -=
-            augmented[i][j] *
+            matrix[i][j] *
             result[j];
       }
 
-      final divisor =
-          augmented[i][i];
-
-      if (divisor.abs() < 1e-12) {
+      if (matrix[i][i].abs() <
+          1e-12) {
         return null;
       }
 
       result[i] =
-          value / divisor;
+          value /
+          matrix[i][i];
     }
 
     return result;
   }
 
-  /// عكس مصفوفة 3x3.
   static List<List<double>>? _invert3x3(
     List<List<double>> m,
   ) {
-    if (m.length != 3 ||
-        m.any((row) => row.length != 3)) {
-      return null;
-    }
-
     final det =
         m[0][0] *
             (m[1][1] * m[2][2] -
@@ -490,41 +675,41 @@ class PerspectiveWarp {
       return null;
     }
 
-    final invDet = 1.0 / det;
+    final inv = 1.0 / det;
 
-    return <List<double>>[
+    return [
       [
         (m[1][1] * m[2][2] -
                 m[1][2] * m[2][1]) *
-            invDet,
+            inv,
         (m[0][2] * m[2][1] -
                 m[0][1] * m[2][2]) *
-            invDet,
+            inv,
         (m[0][1] * m[1][2] -
                 m[0][2] * m[1][1]) *
-            invDet,
+            inv,
       ],
       [
         (m[1][2] * m[2][0] -
                 m[1][0] * m[2][2]) *
-            invDet,
+            inv,
         (m[0][0] * m[2][2] -
                 m[0][2] * m[2][0]) *
-            invDet,
+            inv,
         (m[0][2] * m[1][0] -
                 m[0][0] * m[1][2]) *
-            invDet,
+            inv,
       ],
       [
         (m[1][0] * m[2][1] -
                 m[1][1] * m[2][0]) *
-            invDet,
+            inv,
         (m[0][1] * m[2][0] -
                 m[0][0] * m[2][1]) *
-            invDet,
+            inv,
         (m[0][0] * m[1][1] -
                 m[0][1] * m[1][0]) *
-            invDet,
+            inv,
       ],
     ];
   }
@@ -533,263 +718,576 @@ class PerspectiveWarp {
 /// ===============================================================
 /// SmartCrop
 ///
-/// كشف المستند اعتمادًا على الحواف والمكونات المتصلة.
+/// الاستراتيجية الجديدة:
+///
+/// 1. تصغير الصورة للتحليل فقط.
+/// 2. Grayscale.
+/// 3. إزالة الضوضاء.
+/// 4. حساب gradient.
+/// 5. عدة مستويات threshold.
+/// 6. استخراج مكونات الحواف.
+/// 7. تقييم المستند حسب:
+///    - المساحة
+///    - شكل رباعي
+///    - نسبة العرض/الارتفاع
+///    - قرب الحواف من حدود المرشح
+///    - كثافة الحواف
+///
+/// الهدف منع اختيار نصف البطاقة أو نص داخل البطاقة.
 /// ===============================================================
 
 class SmartCrop {
   static CropResult detect(
     img.Image src,
   ) {
-    if (src.width < 100 ||
-        src.height < 100) {
+    if (src.width < 120 ||
+        src.height < 120) {
       return CropResult(
         image: src,
         changed: false,
       );
     }
 
-    final corners =
-        detectCorners(src);
+    final corners = detectCorners(src);
 
-    if (corners == null ||
-        corners.length != 8) {
+    if (corners == null) {
       return CropResult(
         image: src,
         changed: false,
       );
     }
 
-    final px = <double>[
-      corners[0] * src.width,
-      corners[1] * src.height,
-      corners[2] * src.width,
-      corners[3] * src.height,
-      corners[4] * src.width,
-      corners[5] * src.height,
-      corners[6] * src.width,
-      corners[7] * src.height,
-    ];
-
-    final area = _quadArea(
-      px[0],
-      px[1],
-      px[2],
-      px[3],
-      px[4],
-      px[5],
-      px[6],
-      px[7],
-    );
-
-    final imageArea =
-        src.width *
-        src.height.toDouble();
-
-    if (imageArea <= 0) {
-      return CropResult(
-        image: src,
-        changed: false,
-      );
-    }
-
-    final ratio =
-        area / imageArea;
-
-    /// إذا كان الكشف صغيرًا جدًا، نرفضه.
-    if (ratio < 0.08) {
-      return CropResult(
-        image: src,
-        changed: false,
-      );
-    }
-
-    /// إذا كان تقريبًا كامل الصورة،
-    /// لا نعتبره قصًا حقيقيًا.
-    if (ratio > 0.94) {
-      return CropResult(
-        image: src,
-        changed: false,
-      );
-    }
-
-    final warped =
-        PerspectiveWarp.warp(
+    final result = applyCorners(
       src,
-      px[0],
-      px[1],
-      px[2],
-      px[3],
-      px[4],
-      px[5],
-      px[6],
-      px[7],
+      corners,
     );
 
-    if (warped.width < 30 ||
-        warped.height < 30) {
+    if (result == null) {
       return CropResult(
         image: src,
         changed: false,
+        corners: corners,
       );
     }
 
     return CropResult(
-      image: warped,
+      image: result,
       changed: true,
+      corners: corners,
     );
   }
 
-  /// إرجاع الزوايا كنسب من 0 إلى 1.
-  static List<double>? detectCorners(
-    img.Image src,
+  /// اكتشاف الزوايا فقط.
+  ///
+  /// هذه الدالة مهمة جداً للواجهة:
+  /// الواجهة تعرض النقاط أولاً، ثم المستخدم يستطيع تعديلها.
+  static DocumentCorners? detectCorners(
+    img.Image source,
   ) {
-    if (src.width < 100 ||
-        src.height < 100) {
+    if (source.width < 120 ||
+        source.height < 120) {
       return null;
     }
 
-    final data =
-        _detectCandidate(src);
+    final scale = min(
+      1.0,
+      420.0 /
+          max(
+            source.width,
+            source.height,
+          ),
+    );
 
-    if (data == null) {
-      return null;
-    }
+    final width = max(
+      120,
+      (source.width * scale).round(),
+    );
 
-    if (data.sw <= 0 ||
-        data.sh <= 0) {
-      return null;
-    }
+    final height = max(
+      120,
+      (source.height * scale).round(),
+    );
 
-    final pts = <double>[
-      data.tlX / data.sw,
-      data.tlY / data.sh,
-      data.trX / data.sw,
-      data.trY / data.sh,
-      data.brX / data.sw,
-      data.brY / data.sh,
-      data.blX / data.sw,
-      data.blY / data.sh,
+    final small = img.copyResize(
+      source,
+      width: width,
+      height: height,
+      interpolation: img.Interpolation.average,
+    );
+
+    final gray = img.grayscale(
+      small,
+    );
+
+    final blurred = img.gaussianBlur(
+      gray,
+      radius: 1,
+    );
+
+    final gradient = _gradient(
+      blurred,
+    );
+
+    final candidates = <_QuadCandidate>[];
+
+    /// أكثر من threshold.
+    ///
+    /// هذا مهم جداً للإضاءة.
+    const thresholds = [
+      28.0,
+      40.0,
+      52.0,
+      66.0,
+      82.0,
     ];
 
-    /// هامش صغير جدًا خارج الحواف المكتشفة
-    /// حتى لا تبقى حافة سوداء حول الورقة.
-    const pad = 0.008;
+    for (final threshold in thresholds) {
+      final edges = _threshold(
+        gradient,
+        threshold,
+      );
 
-    for (int i = 0;
-        i < pts.length;
-        i += 2) {
-      pts[i] =
-          (pts[i] +
-                  (pts[i] < 0.5
-                      ? -pad
-                      : pad))
-              .clamp(
-                0.0,
-                1.0,
-              )
-              .toDouble();
+      final cleaned = _closeEdges(
+        edges,
+        width,
+        height,
+      );
 
-      pts[i + 1] =
-          (pts[i + 1] +
-                  (pts[i + 1] < 0.5
-                      ? -pad
-                      : pad))
-              .clamp(
-                0.0,
-                1.0,
-              )
-              .toDouble();
+      final found = _findCandidates(
+        cleaned,
+        gradient,
+        width,
+        height,
+      );
+
+      candidates.addAll(found);
     }
 
-    return pts;
-  }
+    if (candidates.isEmpty) {
+      return _borderScan(
+        gradient,
+        width,
+        height,
+        source,
+      );
+    }
 
-  /// الكشف الأساسي.
-  static _Candidate? _detectCandidate(
-    img.Image src,
-  ) {
-    const target = 320;
-
-    final largest =
-        max(
-      src.width,
-      src.height,
-    );
-
-    final scale =
-        largest / target;
-
-    final safeScale =
-        scale <= 0
-            ? 1.0
-            : scale;
-
-    final sw = max(
-      80,
-      (src.width / safeScale).round(),
-    );
-
-    final sh = max(
-      80,
-      (src.height / safeScale).round(),
-    );
-
-    img.Image gray =
-        img.grayscale(
-      img.copyResize(
-        src,
-        width: sw,
-        height: sh,
+    candidates.sort(
+      (a, b) => b.score.compareTo(
+        a.score,
       ),
     );
 
-    gray = img.gaussianBlur(
-      gray,
-      radius: 2,
+    final best = candidates.first;
+
+    /// منع اختيار جزء صغير من الصورة.
+    if (best.areaRatio < 0.06) {
+      return null;
+    }
+
+    /// إذا المستند تقريباً يملأ الصورة كلها
+    /// نعتبر الصورة أصلاً مقصوصة.
+    if (best.areaRatio > 0.985) {
+      return null;
+    }
+
+    final sx =
+        source.width / width;
+
+    final sy =
+        source.height / height;
+
+    return DocumentCorners(
+      tlX: best.tlX * sx /
+          source.width,
+      tlY: best.tlY * sy /
+          source.height,
+      trX: best.trX * sx /
+          source.width,
+      trY: best.trY * sy /
+          source.height,
+      brX: best.brX * sx /
+          source.width,
+      brY: best.brY * sy /
+          source.height,
+      blX: best.blX * sx /
+          source.width,
+      blY: best.blY * sy /
+          source.height,
+    ).clamp();
+  }
+
+  /// تطبيق الزوايا.
+  static img.Image? applyCorners(
+    img.Image source,
+    DocumentCorners corners,
+  ) {
+    final c = corners.clamp();
+
+    final points = [
+      c.tlX * source.width,
+      c.tlY * source.height,
+      c.trX * source.width,
+      c.trY * source.height,
+      c.brX * source.width,
+      c.brY * source.height,
+      c.blX * source.width,
+      c.blY * source.height,
+    ];
+
+    final area = _area(
+      points[0],
+      points[1],
+      points[2],
+      points[3],
+      points[4],
+      points[5],
+      points[6],
+      points[7],
     );
 
-    final edges =
-        _makeEdges(gray);
+    final imageArea =
+        source.width *
+        source.height;
 
-    final connected =
-        _connectEdgesWithSize(
-      edges,
-      sw,
-      sh,
+    if (area <
+        imageArea * 0.025) {
+      return null;
+    }
+
+    return PerspectiveWarp.warp(
+      source,
+      points[0],
+      points[1],
+      points[2],
+      points[3],
+      points[4],
+      points[5],
+      points[6],
+      points[7],
+    );
+  }
+
+  /// =============================================================
+  /// Gradient
+  /// =============================================================
+
+  static List<double> _gradient(
+    img.Image image,
+  ) {
+    final w = image.width;
+    final h = image.height;
+
+    final output =
+        List<double>.filled(
+      w * h,
+      0,
     );
 
-    final candidates =
-        <_Candidate>[];
+    for (int y = 1;
+        y < h - 1;
+        y++) {
+      for (int x = 1;
+          x < w - 1;
+          x++) {
+        final p00 =
+            image
+                .getPixel(
+                  x - 1,
+                  y - 1,
+                )
+                .r
+                .toInt();
 
-    final visited =
+        final p01 =
+            image
+                .getPixel(
+                  x,
+                  y - 1,
+                )
+                .r
+                .toInt();
+
+        final p02 =
+            image
+                .getPixel(
+                  x + 1,
+                  y - 1,
+                )
+                .r
+                .toInt();
+
+        final p10 =
+            image
+                .getPixel(
+                  x - 1,
+                  y,
+                )
+                .r
+                .toInt();
+
+        final p12 =
+            image
+                .getPixel(
+                  x + 1,
+                  y,
+                )
+                .r
+                .toInt();
+
+        final p20 =
+            image
+                .getPixel(
+                  x - 1,
+                  y + 1,
+                )
+                .r
+                .toInt();
+
+        final p21 =
+            image
+                .getPixel(
+                  x,
+                  y + 1,
+                )
+                .r
+                .toInt();
+
+        final p22 =
+            image
+                .getPixel(
+                  x + 1,
+                  y + 1,
+                )
+                .r
+                .toInt();
+
+        final gx =
+            -p00 +
+            p02 -
+            2 * p10 +
+            2 * p12 -
+            p20 +
+            p22;
+
+        final gy =
+            -p00 -
+            2 * p01 -
+            p02 +
+            p20 +
+            2 * p21 +
+            p22;
+
+        output[y * w + x] =
+            sqrt(
+              gx * gx +
+              gy * gy,
+            );
+      }
+    }
+
+    return output;
+  }
+
+  /// =============================================================
+  /// Threshold
+  /// =============================================================
+
+  static List<bool> _threshold(
+    List<double> gradient,
+    double threshold,
+  ) {
+    return List.generate(
+      gradient.length,
+      (i) => gradient[i] >= threshold,
+    );
+  }
+
+  /// =============================================================
+  /// Morphological close
+  /// =============================================================
+
+  static List<bool> _closeEdges(
+    List<bool> source,
+    int width,
+    int height,
+  ) {
+    var result = _dilate(
+      source,
+      width,
+      height,
+      1,
+    );
+
+    result = _erode(
+      result,
+      width,
+      height,
+      1,
+    );
+
+    return result;
+  }
+
+  static List<bool> _dilate(
+    List<bool> source,
+    int width,
+    int height,
+    int radius,
+  ) {
+    final output =
         List<bool>.filled(
-      sw * sh,
+      source.length,
       false,
     );
+
+    for (int y = 0;
+        y < height;
+        y++) {
+      for (int x = 0;
+        x < width;
+        x++) {
+        bool found = false;
+
+        for (int dy = -radius;
+            dy <= radius && !found;
+            dy++) {
+          final ny = y + dy;
+
+          if (ny < 0 ||
+              ny >= height) {
+            continue;
+          }
+
+          for (int dx = -radius;
+              dx <= radius;
+              dx++) {
+            final nx = x + dx;
+
+            if (nx < 0 ||
+                nx >= width) {
+              continue;
+            }
+
+            if (source[
+                ny * width + nx]) {
+              found = true;
+              break;
+            }
+          }
+        }
+
+        output[
+          y * width + x
+        ] = found;
+      }
+    }
+
+    return output;
+  }
+
+  static List<bool> _erode(
+    List<bool> source,
+    int width,
+    int height,
+    int radius,
+  ) {
+    final output =
+        List<bool>.filled(
+      source.length,
+      false,
+    );
+
+    for (int y = 0;
+        y < height;
+        y++) {
+      for (int x = 0;
+          x < width;
+          x++) {
+        bool all = true;
+
+        for (int dy = -radius;
+            dy <= radius && all;
+            dy++) {
+          final ny = y + dy;
+
+          if (ny < 0 ||
+              ny >= height) {
+            all = false;
+            break;
+          }
+
+          for (int dx = -radius;
+              dx <= radius;
+              dx++) {
+            final nx = x + dx;
+
+            if (nx < 0 ||
+                nx >= width) {
+              all = false;
+              break;
+            }
+
+            if (!source[
+                ny * width + nx]) {
+              all = false;
+              break;
+            }
+          }
+        }
+
+        output[
+          y * width + x
+        ] = all;
+      }
+    }
+
+    return output;
+  }
+
+  /// =============================================================
+  /// Candidate components
+  /// =============================================================
+
+  static List<_QuadCandidate> _findCandidates(
+    List<bool> edges,
+    List<double> gradient,
+    int width,
+    int height,
+  ) {
+    final visited =
+        List<bool>.filled(
+      width * height,
+      false,
+    );
+
+    final result =
+        <_QuadCandidate>[];
 
     final queue =
         <int>[];
 
     final imageArea =
-        sw * sh.toDouble();
+        width * height;
 
-    for (int y = 1;
-        y < sh - 1;
+    for (int y = 2;
+        y < height - 2;
         y++) {
-      for (int x = 1;
-          x < sw - 1;
+      for (int x = 2;
+          x < width - 2;
           x++) {
         final start =
-            y * sw + x;
+            y * width + x;
 
         if (visited[start] ||
-            !connected[start]) {
+            !edges[start]) {
           continue;
         }
 
         queue.clear();
 
         queue.add(start);
+
         visited[start] = true;
 
         int head = 0;
@@ -800,87 +1298,80 @@ class SmartCrop {
         int minY = y;
         int maxY = y;
 
+        int tlIndex = start;
+        int trIndex = start;
+        int brIndex = start;
+        int blIndex = start;
+
         double minSum =
             double.infinity;
 
         double maxSum =
-            -double.infinity;
+            double.negativeInfinity;
 
         double minDiff =
             double.infinity;
 
         double maxDiff =
-            -double.infinity;
+            double.negativeInfinity;
 
-        int tlX = x;
-        int tlY = y;
-
-        int trX = x;
-        int trY = y;
-
-        int brX = x;
-        int brY = y;
-
-        int blX = x;
-        int blY = y;
-
-        while (head <
-            queue.length) {
+        while (head < queue.length) {
           final index =
               queue[head++];
 
           final py =
-              index ~/ sw;
+              index ~/ width;
 
           final px =
-              index - py * sw;
+              index -
+              py * width;
 
           count++;
 
-          if (px < minX) {
-            minX = px;
-          }
+          minX = min(
+            minX,
+            px,
+          );
 
-          if (px > maxX) {
-            maxX = px;
-          }
+          maxX = max(
+            maxX,
+            px,
+          );
 
-          if (py < minY) {
-            minY = py;
-          }
+          minY = min(
+            minY,
+            py,
+          );
 
-          if (py > maxY) {
-            maxY = py;
-          }
+          maxY = max(
+            maxY,
+            py,
+          );
 
           final sum =
-              (px + py).toDouble();
+              px + py;
 
           final diff =
-              (px - py).toDouble();
+              px - py;
 
           if (sum < minSum) {
-            minSum = sum;
-            tlX = px;
-            tlY = py;
+            minSum = sum.toDouble();
+            tlIndex = index;
           }
 
           if (sum > maxSum) {
-            maxSum = sum;
-            brX = px;
-            brY = py;
+            maxSum = sum.toDouble();
+            brIndex = index;
           }
 
           if (diff > maxDiff) {
-            maxDiff = diff;
-            trX = px;
-            trY = py;
+            maxDiff = diff.toDouble();
+            trIndex = index;
           }
 
           if (diff < minDiff) {
-            minDiff = diff;
-            blX = px;
-            blY = py;
+            minDiff = diff.toDouble();
+            blIndex = index;
           }
 
           for (int dy = -1;
@@ -901,17 +1392,17 @@ class SmartCrop {
                   py + dy;
 
               if (nx < 1 ||
-                  nx >= sw - 1 ||
+                  nx >= width - 1 ||
                   ny < 1 ||
-                  ny >= sh - 1) {
+                  ny >= height - 1) {
                 continue;
               }
 
               final next =
-                  ny * sw + nx;
+                  ny * width + nx;
 
               if (!visited[next] &&
-                  connected[next]) {
+                  edges[next]) {
                 visited[next] = true;
                 queue.add(next);
               }
@@ -919,507 +1410,430 @@ class SmartCrop {
           }
         }
 
-        final bw =
+        final boxWidth =
             maxX - minX + 1;
 
-        final bh =
+        final boxHeight =
             maxY - minY + 1;
 
-        final bboxArea =
-            bw * bh.toDouble();
+        final boxArea =
+            boxWidth * boxHeight;
 
-        if (count <
-            max(
-              30,
-              imageArea ~/ 5000,
-            )) {
+        if (count < 20) {
           continue;
         }
 
-        if (bw < sw * 0.12 ||
-            bh < sh * 0.08) {
+        if (boxWidth <
+            width * 0.10) {
           continue;
         }
 
-        if (bboxArea <
-            imageArea * 0.07) {
+        if (boxHeight <
+            height * 0.08) {
           continue;
         }
 
-        final quadArea =
-            _quadArea(
-          tlX.toDouble(),
-          tlY.toDouble(),
-          trX.toDouble(),
-          trY.toDouble(),
-          brX.toDouble(),
-          brY.toDouble(),
-          blX.toDouble(),
-          blY.toDouble(),
+        if (boxArea <
+            imageArea * 0.045) {
+          continue;
+        }
+
+        final tl =
+            _point(
+          tlIndex,
+          width,
         );
 
-        if (quadArea <
-            imageArea * 0.06) {
+        final tr =
+            _point(
+          trIndex,
+          width,
+        );
+
+        final br =
+            _point(
+          brIndex,
+          width,
+        );
+
+        final bl =
+            _point(
+          blIndex,
+          width,
+        );
+
+        final area =
+            _area(
+          tl[0],
+          tl[1],
+          tr[0],
+          tr[1],
+          br[0],
+          br[1],
+          bl[0],
+          bl[1],
+        );
+
+        final areaRatio =
+            area /
+            imageArea;
+
+        if (areaRatio <
+                0.05 ||
+            areaRatio >
+                0.99) {
           continue;
         }
 
-        final coverage =
-            (quadArea / imageArea)
-                .clamp(
-                  0.0,
-                  1.0,
-                )
-                .toDouble();
+        final top =
+            _distance(
+          tl[0],
+          tl[1],
+          tr[0],
+          tr[1],
+        );
 
-        final density =
-            (count / bboxArea)
-                .clamp(
-                  0.0,
-                  1.0,
-                )
-                .toDouble();
+        final bottom =
+            _distance(
+          bl[0],
+          bl[1],
+          br[0],
+          br[1],
+        );
 
-        /// نعطي المساحة أكبر وزنًا.
-        /// هذا يساعد في عدم اختيار بطاقة صغيرة
-        /// داخل ورقة أكبر.
+        final left =
+            _distance(
+          tl[0],
+          tl[1],
+          bl[0],
+          bl[1],
+        );
+
+        final right =
+            _distance(
+          tr[0],
+          tr[1],
+          br[0],
+          br[1],
+        );
+
+        if (top < width * 0.08 ||
+            bottom < width * 0.08 ||
+            left < height * 0.06 ||
+            right < height * 0.06) {
+          continue;
+        }
+
+        final widthRatio =
+            max(top, bottom) /
+            max(1, min(top, bottom));
+
+        final heightRatio =
+            max(left, right) /
+            max(1, min(left, right));
+
+        if (widthRatio > 2.8 ||
+            heightRatio > 2.8) {
+          continue;
+        }
+
+        final rectangularity =
+            _rectangularity(
+          top,
+          bottom,
+          left,
+          right,
+          area,
+        );
+
+        final centerX =
+            (tl[0] +
+                    tr[0] +
+                    br[0] +
+                    bl[0]) /
+                4;
+
+        final centerY =
+            (tl[1] +
+                    tr[1] +
+                    br[1] +
+                    bl[1]) /
+                4;
+
+        final centerDistance =
+            sqrt(
+              pow(
+                    centerX -
+                        width / 2,
+                    2,
+                  ) +
+                  pow(
+                    centerY -
+                        height / 2,
+                    2,
+                  ),
+            );
+
+        final centerScore =
+            1 -
+            min(
+              1,
+              centerDistance /
+                  (max(
+                    width,
+                    height,
+                  ) /
+                      1.5),
+            );
+
+        final sizeScore =
+            min(
+              1,
+              areaRatio /
+                  0.65,
+            );
+
         final score =
-            coverage * 0.82 +
-            density * 0.18;
+            areaRatio * 0.48 +
+            rectangularity * 0.28 +
+            centerScore * 0.10 +
+            sizeScore * 0.14;
 
-        candidates.add(
-          _Candidate(
-            sw: sw,
-            sh: sh,
-            tlX: tlX.toDouble(),
-            tlY: tlY.toDouble(),
-            trX: trX.toDouble(),
-            trY: trY.toDouble(),
-            brX: brX.toDouble(),
-            brY: brY.toDouble(),
-            blX: blX.toDouble(),
-            blY: blY.toDouble(),
+        result.add(
+          _QuadCandidate(
+            tlX: tl[0],
+            tlY: tl[1],
+            trX: tr[0],
+            trY: tr[1],
+            brX: br[0],
+            brY: br[1],
+            blX: bl[0],
+            blY: bl[1],
+            areaRatio: areaRatio,
             score: score,
-            areaRatio: coverage,
           ),
         );
       }
     }
 
-    /// إذا لم نجد مكونًا مناسبًا،
-    /// نحاول إيجاد مستطيل بسيط من الحواف.
-    if (candidates.isEmpty) {
-      final rect =
-          _fallbackRect(
-        edges,
-        sw,
-        sh,
-      );
-
-      if (rect == null) {
-        return null;
-      }
-
-      final rectWidth =
-          rect[2] - rect[0];
-
-      final rectHeight =
-          rect[3] - rect[1];
-
-      if (rectWidth <= 0 ||
-          rectHeight <= 0) {
-        return null;
-      }
-
-      final areaRatio =
-          (rectWidth * rectHeight) /
-          imageArea;
-
-      if (areaRatio < 0.08 ||
-          areaRatio > 0.94) {
-        return null;
-      }
-
-      return _Candidate(
-        sw: sw,
-        sh: sh,
-        tlX: rect[0].toDouble(),
-        tlY: rect[1].toDouble(),
-        trX: rect[2].toDouble(),
-        trY: rect[1].toDouble(),
-        brX: rect[2].toDouble(),
-        brY: rect[3].toDouble(),
-        blX: rect[0].toDouble(),
-        blY: rect[3].toDouble(),
-        score: areaRatio,
-        areaRatio: areaRatio,
-      );
-    }
-
-    candidates.sort(
+    /// لا نرجع مرشحات كثيرة جداً.
+    result.sort(
       (a, b) =>
           b.score.compareTo(
         a.score,
       ),
     );
 
-    final best =
-        candidates.first;
-
-    final scaleX =
-        src.width / sw;
-
-    final scaleY =
-        src.height / sh;
-
-    return _Candidate(
-      sw: src.width,
-      sh: src.height,
-      tlX: best.tlX * scaleX,
-      tlY: best.tlY * scaleY,
-      trX: best.trX * scaleX,
-      trY: best.trY * scaleY,
-      brX: best.brX * scaleX,
-      brY: best.brY * scaleY,
-      blX: best.blX * scaleX,
-      blY: best.blY * scaleY,
-      score: best.score,
-      areaRatio: best.areaRatio,
-    );
-  }
-
-  /// Sobel edge detector.
-  static List<bool> _makeEdges(
-    img.Image gray,
-  ) {
-    final w =
-        gray.width;
-
-    final h =
-        gray.height;
-
-    final output =
-        List<bool>.filled(
-      w * h,
-      false,
-    );
-
-    for (int y = 1;
-        y < h - 1;
-        y++) {
-      for (int x = 1;
-          x < w - 1;
-          x++) {
-        final tl =
-            gray
-                .getPixel(
-                  x - 1,
-                  y - 1,
-                )
-                .r
-                .toInt();
-
-        final tc =
-            gray
-                .getPixel(
-                  x,
-                  y - 1,
-                )
-                .r
-                .toInt();
-
-        final tr =
-            gray
-                .getPixel(
-                  x + 1,
-                  y - 1,
-                )
-                .r
-                .toInt();
-
-        final ml =
-            gray
-                .getPixel(
-                  x - 1,
-                  y,
-                )
-                .r
-                .toInt();
-
-        final mr =
-            gray
-                .getPixel(
-                  x + 1,
-                  y,
-                )
-                .r
-                .toInt();
-
-        final bl =
-            gray
-                .getPixel(
-                  x - 1,
-                  y + 1,
-                )
-                .r
-                .toInt();
-
-        final bc =
-            gray
-                .getPixel(
-                  x,
-                  y + 1,
-                )
-                .r
-                .toInt();
-
-        final br =
-            gray
-                .getPixel(
-                  x + 1,
-                  y + 1,
-                )
-                .r
-                .toInt();
-
-        final gx =
-            (tr +
-                2 * mr +
-                br) -
-            (tl +
-                2 * ml +
-                bl);
-
-        final gy =
-            (bl +
-                2 * bc +
-                br) -
-            (tl +
-                2 * tc +
-                tr);
-
-        final magnitude =
-            sqrt(
-          (gx * gx +
-                  gy * gy)
-              .toDouble(),
-        );
-
-        /// Threshold متوسط لتقليل الضوضاء.
-        if (magnitude > 52) {
-          output[
-              y * w + x] = true;
-        }
-      }
+    if (result.length > 12) {
+      return result.sublist(
+        0,
+        12,
+      );
     }
-
-    return output;
-  }
-
-  /// Dilate للحواف.
-  static List<bool> _dilate(
-    List<bool> source,
-    int w,
-    int h,
-    int radius,
-  ) {
-    final output =
-        List<bool>.filled(
-      source.length,
-      false,
-    );
-
-    for (int y = 0;
-        y < h;
-        y++) {
-      for (int x = 0;
-          x < w;
-          x++) {
-        bool hit = false;
-
-        for (int dy = -radius;
-            dy <= radius &&
-                !hit;
-            dy++) {
-          final ny =
-              y + dy;
-
-          if (ny < 0 ||
-              ny >= h) {
-            continue;
-          }
-
-          for (int dx = -radius;
-              dx <= radius;
-              dx++) {
-            final nx =
-                x + dx;
-
-            if (nx < 0 ||
-                nx >= w) {
-              continue;
-            }
-
-            if (source[
-                ny * w + nx]) {
-              hit = true;
-              break;
-            }
-          }
-        }
-
-        output[
-            y * w + x] = hit;
-      }
-    }
-
-    return output;
-  }
-
-  /// توصيل الحواف القريبة من بعضها.
-  static List<bool>
-      _connectEdgesWithSize(
-    List<bool> source,
-    int w,
-    int h,
-  ) {
-    var result =
-        _dilate(
-      source,
-      w,
-      h,
-      2,
-    );
-
-    result =
-        _dilate(
-      result,
-      w,
-      h,
-      1,
-    );
 
     return result;
   }
 
-  /// كاشف مستطيل احتياطي.
-  static List<int>? _fallbackRect(
-    List<bool> edges,
-    int w,
-    int h,
+  /// =============================================================
+  /// fallback
+  ///
+  /// عند فشل connected components نحاول اكتشاف حدود عامة.
+  /// =============================================================
+
+  static DocumentCorners? _borderScan(
+    List<double> gradient,
+    int width,
+    int height,
+    img.Image source,
   ) {
-    int? top;
-    int? bottom;
-    int? left;
-    int? right;
+    final thresholds = [
+      25.0,
+      35.0,
+      50.0,
+      70.0,
+    ];
 
-    /// أعلى
-    for (int y = 0;
-        y < h;
-        y++) {
-      int count = 0;
+    for (final threshold in thresholds) {
+      int? left;
+      int? right;
+      int? top;
+      int? bottom;
 
-      for (int x = 0;
-          x < w;
-          x++) {
-        if (edges[
-            y * w + x]) {
-          count++;
-        }
-      }
+      final horizontal =
+          List<int>.filled(
+        height,
+        0,
+      );
 
-      if (count > w * 0.10) {
-        top = y;
-        break;
-      }
-    }
-
-    /// أسفل
-    for (int y = h - 1;
-        y >= 0;
-        y--) {
-      int count = 0;
-
-      for (int x = 0;
-          x < w;
-          x++) {
-        if (edges[
-            y * w + x]) {
-          count++;
-        }
-      }
-
-      if (count > w * 0.10) {
-        bottom = y;
-        break;
-      }
-    }
-
-    /// يسار
-    for (int x = 0;
-        x < w;
-        x++) {
-      int count = 0;
+      final vertical =
+          List<int>.filled(
+        width,
+        0,
+      );
 
       for (int y = 0;
-          y < h;
+          y < height;
           y++) {
-        if (edges[
-            y * w + x]) {
-          count++;
+        for (int x = 0;
+            x < width;
+            x++) {
+          if (gradient[
+                  y * width + x] >=
+              threshold) {
+            horizontal[y]++;
+            vertical[x]++;
+          }
         }
       }
 
-      if (count > h * 0.10) {
-        left = x;
-        break;
+      for (int x = 0;
+          x < width;
+          x++) {
+        if (vertical[x] >
+            height * 0.08) {
+          left = x;
+          break;
+        }
       }
-    }
 
-    /// يمين
-    for (int x = w - 1;
-        x >= 0;
-        x--) {
-      int count = 0;
+      for (int x = width - 1;
+          x >= 0;
+          x--) {
+        if (vertical[x] >
+            height * 0.08) {
+          right = x;
+          break;
+        }
+      }
 
       for (int y = 0;
-          y < h;
+          y < height;
           y++) {
-        if (edges[
-            y * w + x]) {
-          count++;
+        if (horizontal[y] >
+            width * 0.08) {
+          top = y;
+          break;
         }
       }
 
-      if (count > h * 0.10) {
-        right = x;
-        break;
+      for (int y = height - 1;
+          y >= 0;
+          y--) {
+        if (horizontal[y] >
+            width * 0.08) {
+          bottom = y;
+          break;
+        }
       }
+
+      if (left == null ||
+          right == null ||
+          top == null ||
+          bottom == null) {
+        continue;
+      }
+
+      final area =
+          (right - left) *
+          (bottom - top);
+
+      final imageArea =
+          width * height;
+
+      if (area <
+              imageArea * 0.08 ||
+          area >
+              imageArea * 0.98) {
+        continue;
+      }
+
+      final sx =
+          source.width /
+          width;
+
+      final sy =
+          source.height /
+          height;
+
+      return DocumentCorners(
+        tlX:
+            left * sx /
+            source.width,
+        tlY:
+            top * sy /
+            source.height,
+        trX:
+            right * sx /
+            source.width,
+        trY:
+            top * sy /
+            source.height,
+        brX:
+            right * sx /
+            source.width,
+        brY:
+            bottom * sy /
+            source.height,
+        blX:
+            left * sx /
+            source.width,
+        blY:
+            bottom * sy /
+            source.height,
+      ).clamp();
     }
 
-    if (top == null ||
-        bottom == null ||
-        left == null ||
-        right == null) {
-      return null;
-    }
+    return null;
+  }
 
-    if (right - left <
-            w * 0.12 ||
-        bottom - top <
-            h * 0.08) {
-      return null;
-    }
+  static List<double> _point(
+    int index,
+    int width,
+  ) {
+    final y =
+        index ~/ width;
 
-    return <int>[
-      left,
-      top,
-      right,
-      bottom,
+    final x =
+        index -
+        y * width;
+
+    return [
+      x.toDouble(),
+      y.toDouble(),
     ];
   }
 
-  /// مساحة الشكل الرباعي.
-  static double _quadArea(
+  static double _rectangularity(
+    double top,
+    double bottom,
+    double left,
+    double right,
+    double area,
+  ) {
+    final averageWidth =
+        (top + bottom) / 2;
+
+    final averageHeight =
+        (left + right) / 2;
+
+    final expected =
+        averageWidth *
+        averageHeight;
+
+    if (expected <= 0) {
+      return 0;
+    }
+
+    return (
+      area /
+      expected
+    ).clamp(
+      0.0,
+      1.0,
+    );
+  }
+
+  static double _area(
     double x1,
     double y1,
     double x2,
@@ -1429,28 +1843,25 @@ class SmartCrop {
     double x4,
     double y4,
   ) {
-    final value =
-        (x1 * y2 +
-                x2 * y3 +
-                x3 * y4 +
-                x4 * y1) -
-            (y1 * x2 +
-                y2 * x3 +
-                y3 * x4 +
-                y4 * x1);
-
-    return value.abs() / 2.0;
+    return (
+          x1 * y2 +
+          x2 * y3 +
+          x3 * y4 +
+          x4 * y1 -
+          y1 * x2 -
+          y2 * x3 -
+          y3 * x4 -
+          y4 * x1
+        ).abs() /
+        2;
   }
 }
 
 /// ===============================================================
-/// بيانات مرشح
+/// Candidate
 /// ===============================================================
 
-class _Candidate {
-  final int sw;
-  final int sh;
-
+class _QuadCandidate {
   final double tlX;
   final double tlY;
 
@@ -1463,12 +1874,10 @@ class _Candidate {
   final double blX;
   final double blY;
 
-  final double score;
   final double areaRatio;
+  final double score;
 
-  const _Candidate({
-    required this.sw,
-    required this.sh,
+  const _QuadCandidate({
     required this.tlX,
     required this.tlY,
     required this.trX,
@@ -1477,17 +1886,24 @@ class _Candidate {
     required this.brY,
     required this.blX,
     required this.blY,
-    required this.score,
     required this.areaRatio,
+    required this.score,
   });
 }
 
 /// ===============================================================
-/// القص اليدوي
+/// ManualCrop
+///
+/// القص اليدوي.
+///
+/// مهم:
+/// هذه الدوال ترجع Image جديدة.
+/// main.dart يجب أن يستلم هذه الصورة ويضعها
+/// في متغير الصورة الحالية.
 /// ===============================================================
 
 class ManualCrop {
-  /// قص منظور بأربع نقاط.
+  /// قص منظور حقيقي.
   static img.Image cropPerspective(
     img.Image src,
     double x1,
@@ -1501,20 +1917,18 @@ class ManualCrop {
   ) {
     return PerspectiveWarp.warp(
       src,
-      x1,
-      y1,
-      x2,
-      y2,
-      x3,
-      y3,
-      x4,
-      y4,
+      x1 * src.width,
+      y1 * src.height,
+      x2 * src.width,
+      y2 * src.height,
+      x3 * src.width,
+      y3 * src.height,
+      x4 * src.width,
+      y4 * src.height,
     );
   }
 
-  /// قص مستطيل عادي.
-  ///
-  /// الإحداثيات نسب من 0 إلى 1.
+  /// القص المستطيلي التقليدي.
   static img.Image cropRect(
     img.Image src,
     double x1,
@@ -1526,145 +1940,108 @@ class ManualCrop {
     double x4,
     double y4,
   ) {
-    final xs = <double>[
+    final xs = [
       x1 * src.width,
       x2 * src.width,
       x3 * src.width,
       x4 * src.width,
     ];
 
-    final ys = <double>[
+    final ys = [
       y1 * src.height,
       y2 * src.height,
       y3 * src.height,
       y4 * src.height,
     ];
 
-    final left =
-        xs.reduce(min)
-            .round()
-            .clamp(
-              0,
-              max(0, src.width - 1),
-            )
-            .toInt();
+    int left =
+        xs.reduce(min).round();
 
-    final right =
-        xs.reduce(max)
-            .round()
-            .clamp(
-              1,
-              src.width,
-            )
-            .toInt();
+    int right =
+        xs.reduce(max).round();
 
-    final top =
-        ys.reduce(min)
-            .round()
-            .clamp(
-              0,
-              max(0, src.height - 1),
-            )
-            .toInt();
+    int top =
+        ys.reduce(min).round();
 
-    final bottom =
-        ys.reduce(max)
-            .round()
-            .clamp(
-              1,
-              src.height,
-            )
-            .toInt();
+    int bottom =
+        ys.reduce(max).round();
 
-    final width =
-        max(
-      10,
-      right - left,
+    left = left.clamp(
+      0,
+      src.width - 1,
     );
 
-    final height =
-        max(
-      10,
-      bottom - top,
+    top = top.clamp(
+      0,
+      src.height - 1,
+    );
+
+    right = right.clamp(
+      left + 1,
+      src.width,
+    );
+
+    bottom = bottom.clamp(
+      top + 1,
+      src.height,
     );
 
     return img.copyCrop(
       src,
       x: left,
       y: top,
-      width: width,
-      height: height,
+      width: max(
+        10,
+        right - left,
+      ),
+      height: max(
+        10,
+        bottom - top,
+      ),
     );
   }
-}
 
-/// ===============================================================
-/// Google ML Kit Document Scanner
-///
-/// الإصدار:
-/// google_mlkit_document_scanner: ^0.5.0
-///
-/// هذا المكوّن يعمل عبر واجهة Google ML Kit
-/// على Android.
-/// ===============================================================
-
-class GoogleScanner {
-  static Future<List<String>?> scan() async {
-    DocumentScanner? scanner;
-
-    try {
-      scanner = DocumentScanner(
-        options: DocumentScannerOptions(
-          documentFormats: {
-            DocumentFormat.jpeg,
-          },
-          mode: ScannerMode.filter,
-          pageLimit: 10,
-          isGalleryImport: true,
-        ),
+  /// استخدام DocumentCorners مباشرة.
+  static img.Image crop(
+    img.Image src,
+    DocumentCorners corners, {
+    bool perspective = true,
+  }) {
+    if (perspective) {
+      return cropPerspective(
+        src,
+        corners.tlX,
+        corners.tlY,
+        corners.trX,
+        corners.trY,
+        corners.brX,
+        corners.brY,
+        corners.blX,
+        corners.blY,
       );
-
-      final result =
-          await scanner.scanDocument();
-
-      final images =
-          result.images;
-
-      if (images == null ||
-          images.isEmpty) {
-        return null;
-      }
-
-      return List<String>.from(
-        images,
-      );
-    } catch (_) {
-      return null;
-    } finally {
-      if (scanner != null) {
-        try {
-          await scanner.close();
-        } catch (_) {
-          // تجاهل خطأ إغلاق الماسح.
-        }
-      }
     }
+
+    return cropRect(
+      src,
+      corners.tlX,
+      corners.tlY,
+      corners.trX,
+      corners.trY,
+      corners.brX,
+      corners.brY,
+      corners.blX,
+      corners.blY,
+    );
   }
 }
 
 /// ===============================================================
 /// ImageEnhancer
 ///
-/// هذا الكلاس كان مفقودًا في النسخة السابقة،
-/// بينما main.dart يستدعي:
-///
-/// ImageEnhancer.apply(res, _filter)
-///
-/// لذلك تمت إضافته هنا.
+/// الفلاتر الموجودة هنا مستقلة عن القص.
 /// ===============================================================
 
 class ImageEnhancer {
-  /// تطبيق الفلتر المطلوب.
   static img.Image apply(
     img.Image source,
     EnhanceMode mode,
@@ -1674,59 +2051,61 @@ class ImageEnhancer {
         return source;
 
       case EnhanceMode.soft:
-        return soft(source);
+        return _soft(
+          source,
+        );
+
+      case EnhanceMode.gray:
+        return img.grayscale(
+          source,
+        );
 
       case EnhanceMode.bw:
-        return blackAndWhite(source);
+        return _blackWhite(
+          source,
+        );
+
+      case EnhanceMode.document:
+        return _document(
+          source,
+        );
     }
   }
 
-  /// تحسين خفيف:
-  /// - زيادة بسيطة للتباين
-  /// - زيادة بسيطة للسطوع
-  /// - الحفاظ على الألوان
-  static img.Image soft(
+  static img.Image _soft(
     img.Image source,
   ) {
     final result =
-        img.Image(
-      width: source.width,
-      height: source.height,
-      numChannels: 4,
+        img.Image.from(
+      source,
     );
 
     for (int y = 0;
-        y < source.height;
+        y < result.height;
         y++) {
       for (int x = 0;
-          x < source.width;
+          x < result.width;
           x++) {
         final p =
-            source.getPixel(
+            result.getPixel(
           x,
           y,
         );
 
         final r =
-            _adjustChannel(
-          p.r.toDouble(),
-          brightness: 5.0,
-          contrast: 1.08,
-        );
+            (p.r * 1.04)
+                .round()
+                .clamp(0, 255);
 
         final g =
-            _adjustChannel(
-          p.g.toDouble(),
-          brightness: 5.0,
-          contrast: 1.08,
-        );
+            (p.g * 1.04)
+                .round()
+                .clamp(0, 255);
 
         final b =
-            _adjustChannel(
-          p.b.toDouble(),
-          brightness: 5.0,
-          contrast: 1.08,
-        );
+            (p.b * 1.04)
+                .round()
+                .clamp(0, 255);
 
         result.setPixelRgba(
           x,
@@ -1734,7 +2113,7 @@ class ImageEnhancer {
           r,
           g,
           b,
-          p.a,
+          p.a.toInt(),
         );
       }
     }
@@ -1742,44 +2121,100 @@ class ImageEnhancer {
     return result;
   }
 
-  /// تحويل إلى أبيض وأسود عالي الوضوح.
-  ///
-  /// نستخدم luminance بدل متوسط RGB
-  /// للحصول على نتيجة أفضل للنصوص.
-  static img.Image blackAndWhite(
+  static img.Image _blackWhite(
     img.Image source,
   ) {
+    final gray =
+        img.grayscale(
+      source,
+    );
+
     final result =
         img.Image(
-      width: source.width,
-      height: source.height,
-      numChannels: 4,
+      width: gray.width,
+      height: gray.height,
     );
 
     for (int y = 0;
-        y < source.height;
+        y < gray.height;
         y++) {
       for (int x = 0;
-          x < source.width;
+          x < gray.width;
           x++) {
         final p =
-            source.getPixel(
+            gray.getPixel(
           x,
           y,
         );
 
-        final luminance =
-            0.299 * p.r +
-            0.587 * p.g +
-            0.114 * p.b;
+        final value =
+            p.r.toInt();
 
-        /// Contrast أعلى للنصوص.
-        final enhanced =
-            _adjustChannel(
-          luminance.toDouble(),
-          brightness: 0.0,
-          contrast: 1.18,
+        final bw =
+            value >= 155
+                ? 255
+                : 0;
+
+        result.setPixelRgba(
+          x,
+          y,
+          bw,
+          bw,
+          bw,
+          p.a.toInt(),
         );
+      }
+    }
+
+    return result;
+  }
+
+  static img.Image _document(
+    img.Image source,
+  ) {
+    final gray =
+        img.grayscale(
+      source,
+    );
+
+    final blurred =
+        img.gaussianBlur(
+      gray,
+      radius: 1,
+    );
+
+    final result =
+        img.Image(
+      width: blurred.width,
+      height: blurred.height,
+    );
+
+    for (int y = 0;
+        y < blurred.height;
+        y++) {
+      for (int x = 0;
+          x < blurred.width;
+          x++) {
+        final p =
+            blurred.getPixel(
+          x,
+          y,
+        );
+
+        final v =
+            p.r.toInt();
+
+        /// رفع التباين بطريقة ناعمة
+        /// حتى لا تختفي الكتابة الخفيفة.
+        final enhanced =
+            ((v - 128) *
+                    1.22 +
+                128)
+                .round()
+                .clamp(
+                  0,
+                  255,
+                );
 
         result.setPixelRgba(
           x,
@@ -1787,31 +2222,12 @@ class ImageEnhancer {
           enhanced,
           enhanced,
           enhanced,
-          p.a,
+          p.a.toInt(),
         );
       }
     }
 
     return result;
-  }
-
-  static int _adjustChannel(
-    double value, {
-    required double brightness,
-    required double contrast,
-  }) {
-    final adjusted =
-        ((value - 128.0) *
-                contrast) +
-            128.0 +
-            brightness;
-
-    return adjusted
-        .clamp(
-          0.0,
-          255.0,
-        )
-        .round();
   }
 }
 
@@ -1820,18 +2236,15 @@ class ImageEnhancer {
 /// ===============================================================
 
 class ImageUtils {
-  /// تحويل الصورة إلى JPEG.
   static List<int> encodeJpg(
     img.Image source, {
     int quality = 92,
   }) {
     final safeQuality =
-        quality
-            .clamp(
-              1,
-              100,
-            )
-            .toInt();
+        quality.clamp(
+      1,
+      100,
+    );
 
     return img.encodeJpg(
       source,
@@ -1839,7 +2252,6 @@ class ImageUtils {
     );
   }
 
-  /// تحويل الصورة إلى JPEG وإرجاع Uint8List.
   static Uint8List? encodeJpgBytes(
     img.Image source, {
     int quality = 92,
@@ -1856,7 +2268,6 @@ class ImageUtils {
     }
   }
 
-  /// فك Bytes إلى Image.
   static img.Image? decodeBytes(
     dynamic bytes,
   ) {
@@ -1881,7 +2292,6 @@ class ImageUtils {
     return null;
   }
 
-  /// التأكد من أن الصورة صالحة.
   static bool isValid(
     img.Image? image,
   ) {
@@ -1893,58 +2303,84 @@ class ImageUtils {
         image.height >= 10;
   }
 
-  /// نسخ الصورة.
-  static img.Image copy(
-    img.Image source,
-  ) {
-    return img.Image.from(
-      source,
-    );
-  }
-
-  /// تغيير حجم الصورة مع الحفاظ على النسبة.
-  static img.Image resizeToFit(
+  static img.Image resizeForProcessing(
     img.Image source, {
-    required int maxWidth,
-    required int maxHeight,
+    int maxSize = 1800,
   }) {
-    if (source.width <= maxWidth &&
-        source.height <= maxHeight) {
+    final longest =
+        max(
+      source.width,
+      source.height,
+    );
+
+    if (longest <= maxSize) {
       return source;
     }
 
-    final widthRatio =
-        maxWidth /
-        source.width;
-
-    final heightRatio =
-        maxHeight /
-        source.height;
-
-    final ratio =
-        min(
-      widthRatio,
-      heightRatio,
-    );
-
-    final newWidth =
-        max(
-      1,
-      (source.width * ratio)
-          .round(),
-    );
-
-    final newHeight =
-        max(
-      1,
-      (source.height * ratio)
-          .round(),
-    );
+    final scale =
+        maxSize / longest;
 
     return img.copyResize(
       source,
-      width: newWidth,
-      height: newHeight,
+      width: max(
+        1,
+        (source.width * scale)
+            .round(),
+      ),
+      height: max(
+        1,
+        (source.height * scale)
+            .round(),
+      ),
+      interpolation:
+          img.Interpolation.average,
     );
+  }
+}
+
+/// ===============================================================
+/// GoogleScanner
+///
+/// يبقى موجوداً كخيار مستقل.
+/// لا نعتمد عليه كمحرك القص الرئيسي.
+/// ===============================================================
+
+class GoogleScanner {
+  static Future<List<String>?> scan() async {
+    DocumentScanner? scanner;
+
+    try {
+      scanner =
+          DocumentScanner(
+        options:
+            DocumentScannerOptions(
+          documentFormats: {
+            DocumentFormat.jpeg,
+          },
+          mode:
+              ScannerMode.filter,
+          pageLimit: 10,
+          isGalleryImport: true,
+        ),
+      );
+
+      final result =
+          await scanner.scanDocument();
+
+      if (result.images == null ||
+          result.images!.isEmpty) {
+        return null;
+      }
+
+      return result.images;
+    } catch (_) {
+      return null;
+    } finally {
+      if (scanner != null) {
+        try {
+          scanner.close();
+        } catch (_) {}
+      }
+    }
   }
 }
