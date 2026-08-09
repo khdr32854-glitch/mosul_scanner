@@ -1,487 +1,2033 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+
 import 'crop_engine.dart';
 
-void main() => runApp(const MosulScannerApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MosulScannerApp());
+}
+
+// ═══════════════════════════════════════════════════════════════
+// التطبيق
+// ═══════════════════════════════════════════════════════════════
 
 class MosulScannerApp extends StatelessWidget {
   const MosulScannerApp({super.key});
+
   @override
-  Widget build(BuildContext c) => MaterialApp(
-    title: 'مكتب علاء الحديدي - الماسح والطباعة',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-    home: const MainScreen(),
-  );
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'مكتب علاء الحديدي - الماسح والطباعة',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: const Color(0xFF0284C7),
+        scaffoldBackgroundColor: const Color(0xFF1E293B),
+      ),
+      home: const MainScreen(),
+    );
+  }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// عنصر المستند
+// ═══════════════════════════════════════════════════════════════
+
 class DocItem {
-  String id;
+  final String id;
+
   img.Image image;
   Uint8List bytes;
-  double wMm, hMm, xMm, yMm;
+
+  double wMm;
+  double hMm;
+
+  double xMm;
+  double yMm;
+
   int rot;
+
   bool photo;
   bool curvedCorners;
-  DocItem({required this.id, required this.image, required this.bytes, required this.wMm, required this.hMm, required this.xMm, required this.yMm, this.rot = 0, this.photo = false, this.curvedCorners = false});
+
+  DocItem({
+    required this.id,
+    required this.image,
+    required this.bytes,
+    required this.wMm,
+    required this.hMm,
+    required this.xMm,
+    required this.yMm,
+    this.rot = 0,
+    this.photo = false,
+    this.curvedCorners = false,
+  });
 
   img.Image get rotated {
-    if (rot % 360 == 0) return image;
-    final r = (rot % 360 + 360) % 360;
-    if (r == 90) return img.copyRotate(image, angle: 90);
-    if (r == 180) return img.copyRotate(image, angle: 180);
-    if (r == 270) return img.copyRotate(image, angle: 270);
+    final r = ((rot % 360) + 360) % 360;
+
+    if (r == 0) {
+      return image;
+    }
+
+    if (r == 90) {
+      return img.copyRotate(image, angle: 90);
+    }
+
+    if (r == 180) {
+      return img.copyRotate(image, angle: 180);
+    }
+
+    if (r == 270) {
+      return img.copyRotate(image, angle: 270);
+    }
+
     return image;
   }
 
   void applyRot() {
-    if (rot % 360 == 0) return;
+    final r = ((rot % 360) + 360) % 360;
+
+    if (r == 0) {
+      return;
+    }
+
     image = rotated;
-    bytes = Uint8List.fromList(ImageUtils.encodeJpg(image));
-    final t = wMm; wMm = hMm; hMm = t; rot = 0;
+
+    bytes = Uint8List.fromList(
+      ImageUtils.encodeJpg(
+        image,
+        quality: 94,
+      ),
+    );
+
+    if (r == 90 || r == 270) {
+      final oldW = wMm;
+      wMm = hMm;
+      hMm = oldW;
+    }
+
+    rot = 0;
   }
 
-  void replaceImage(img.Image newImg) {
-    image = newImg;
-    bytes = Uint8List.fromList(ImageUtils.encodeJpg(newImg));
+  /// استبدال الصورة بعد القص.
+  ///
+  /// هذه الدالة مهمة جدًا:
+  /// بعد القص يتم تحديث:
+  /// - image
+  /// - bytes
+  /// - الأبعاد
+  /// - الدوران
+  void replaceImage(img.Image newImage) {
+    if (newImage.width < 2 || newImage.height < 2) {
+      return;
+    }
+
+    image = newImage;
+
+    bytes = Uint8List.fromList(
+      ImageUtils.encodeJpg(
+        newImage,
+        quality: 95,
+      ),
+    );
+
     rot = 0;
-    hMm = newImg.height / newImg.width * wMm;
+
+    final aspect =
+        newImage.height / max(1, newImage.width);
+
+    hMm = wMm * aspect;
+  }
+
+  DocItem duplicate() {
+    final copied = img.Image.from(image);
+
+    return DocItem(
+      id: '${DateTime.now().microsecondsSinceEpoch}',
+      image: copied,
+      bytes: Uint8List.fromList(bytes),
+      wMm: wMm,
+      hMm: hMm,
+      xMm: xMm + 5,
+      yMm: yMm + 5,
+      rot: rot,
+      photo: photo,
+      curvedCorners: curvedCorners,
+    );
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// الشاشة الرئيسية
+// ═══════════════════════════════════════════════════════════════
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
-  @override State<MainScreen> createState() => _MainScreenState();
+
+  @override
+  State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
   final List<DocItem> _items = [];
-  DocItem? _sel;
-  final ImagePicker _picker = ImagePicker();
-  String _mode = 'docs';
-  static const pwM = 210.0, phM = 297.0, mM = 10.0;
 
-  /// فتح Google ML Kit Document Scanner
-  void _googleScan() async {
+  DocItem? _sel;
+
+  final ImagePicker _picker = ImagePicker();
+
+  String _mode = 'docs';
+
+  static const double pageW = 210.0;
+  static const double pageH = 297.0;
+  static const double margin = 10.0;
+
+  // ═══════════════════════════════════════════════════════════
+  // Google Scanner
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _googleScan() async {
     try {
       final paths = await GoogleScanner.scan();
+
+      if (!mounted) {
+        return;
+      }
+
       if (paths == null || paths.isEmpty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إلغاء المسح'), backgroundColor: Colors.grey, duration: Duration(seconds: 1)),
+        _message(
+          'تم إلغاء المسح',
+          Colors.grey,
         );
         return;
       }
+
       for (int i = 0; i < paths.length; i++) {
-        final raw = await File(paths[i]).readAsBytes();
-        final dec = ImageUtils.decodeBytes(raw);
-        if (dec == null) continue;
-        final enc = Uint8List.fromList(ImageUtils.encodeJpg(dec));
-        if (!mounted) return;
-        setState(() {
-          final item = DocItem(
-            id: 'gs_${DateTime.now().millisecondsSinceEpoch}$i',
-            image: dec, bytes: enc,
-            wMm: _mode == 'photos' ? 36 : 85,
-            hMm: _mode == 'photos' ? 45 : (dec.height / dec.width * 85),
-            xMm: mM + _items.length * 4, yMm: mM + _items.length * 4,
-            photo: _mode == 'photos',
-          );
-          _items.add(item); _sel = item;
-        });
-      }
-    } catch (_) {
-      // Google Scanner غير متوفر — fallback إلى الكاميرا
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Scanner غير متوفر — استخدام الكاميرا العادية'), backgroundColor: Colors.blue, duration: Duration(seconds: 2)),
+        final file = File(paths[i]);
+
+        if (!await file.exists()) {
+          continue;
+        }
+
+        final raw = await file.readAsBytes();
+
+        final decoded = ImageUtils.decodeBytes(raw);
+
+        if (decoded == null) {
+          continue;
+        }
+
+        _addDecodedImage(
+          decoded,
+          prefix: 'google_$i',
         );
-        _addImgs(ImageSource.camera);
       }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      _message(
+        'تعذر تشغيل الماسح — سيتم استخدام الكاميرا',
+        Colors.blue,
+      );
+
+      await _addImages(ImageSource.camera);
     }
   }
 
-  void _addImgs(ImageSource src) async {
-    final List<XFile> files;
-    if (src == ImageSource.gallery) {
-      files = await _picker.pickMultiImage();
-    } else {
-      final f = await _picker.pickImage(source: src, imageQuality: 95);
-      files = f != null ? [f] : [];
-    }
-    for (int i = 0; i < files.length; i++) {
-      final raw = await File(files[i].path).readAsBytes();
-      final dec = ImageUtils.decodeBytes(raw);
-      if (dec == null) continue;
-      final enc = Uint8List.fromList(ImageUtils.encodeJpg(dec));
-      if (!mounted) return;
-      setState(() {
-        final item = DocItem(
-          id: '${DateTime.now().millisecondsSinceEpoch}$i',
-          image: dec, bytes: enc,
-          wMm: _mode == 'photos' ? 36 : 85,
-          hMm: _mode == 'photos' ? 45 : (dec.height / dec.width * 85),
-          xMm: mM + _items.length * 4, yMm: mM + _items.length * 4,
-          photo: _mode == 'photos',
+  // ═══════════════════════════════════════════════════════════
+  // إضافة صورة
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _addImages(ImageSource source) async {
+    try {
+      List<XFile> files = [];
+
+      if (source == ImageSource.gallery) {
+        files = await _picker.pickMultiImage(
+          imageQuality: 95,
         );
-        _items.add(item); _sel = item;
-      });
-    }
-  }
+      } else {
+        final file = await _picker.pickImage(
+          source: source,
+          imageQuality: 95,
+        );
 
-  void _resz(double w, double h, {bool p = false, bool curved = false}) {
-    if (_sel != null) setState(() { _sel!.wMm = w; _sel!.hMm = h; _sel!.photo = p; _sel!.curvedCorners = curved; });
-  }
-
-  void _rot() { if (_sel != null) setState(() => _sel!.applyRot()); }
-
-  void _dup() {
-    if (_sel == null) return;
-    final s = _sel!;
-    setState(() {
-      _items.add(DocItem(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        image: img.copyResize(s.image, width: s.image.width),
-        bytes: Uint8List.fromList(s.bytes),
-        wMm: s.wMm, hMm: s.hMm, xMm: s.xMm + 5, yMm: s.yMm + 5,
-        rot: s.rot, photo: s.photo, curvedCorners: s.curvedCorners,
-      ));
-      _sel = _items.last;
-    });
-  }
-
-  void _aln() {
-    setState(() {
-      double cx = mM, cy = mM, mh = 0;
-      for (var i in _items) {
-        if (cx + i.wMm > pwM - mM) { cx = mM; cy += mh + 5; mh = 0; }
-        i.xMm = cx; i.yMm = cy; cx += i.wMm + 5; if (i.hMm > mh) mh = i.hMm;
+        if (file != null) {
+          files = [file];
+        }
       }
-    });
-  }
 
-  void _autoCrop() {
-    if (_sel == null) return;
-    final result = SmartCrop.detect(_sel!.rotated);
-    if (result.changed) {
-      setState(() => _sel!.replaceImage(result.image));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لم يتم اكتشاف مستند'), backgroundColor: Colors.orange, duration: Duration(seconds: 1)),
+      if (files.isEmpty) {
+        return;
+      }
+
+      for (int i = 0; i < files.length; i++) {
+        final raw = await File(files[i].path).readAsBytes();
+
+        final decoded = ImageUtils.decodeBytes(raw);
+
+        if (decoded == null) {
+          continue;
+        }
+
+        _addDecodedImage(
+          decoded,
+          prefix: 'image_$i',
+        );
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      _message(
+        'تعذر فتح الصورة',
+        Colors.red,
       );
     }
   }
 
-  void _manualCrop() async {
-    if (_sel == null) return;
-    final ri = _sel!.rotated;
-    final res = await Navigator.push<img.Image>(context, MaterialPageRoute(builder: (_) => CropScreen(image: ri)));
-    if (res != null && mounted) setState(() => _sel!.replaceImage(res));
-  }
+  void _addDecodedImage(
+    img.Image decoded, {
+    String prefix = 'img',
+  }) {
+    final isPhoto = _mode == 'photos';
 
-  void _prnt() async {
-    final doc = pw.Document();
-    doc.addPage(pw.Page(pageFormat: PdfPageFormat.a4, margin: pw.EdgeInsets.zero, build: (_) {
-      final ws = <pw.Widget>[];
-      for (final i in _items) {
-        final pi = i.rotated;
-        ws.add(pw.Positioned(left: i.xMm * PdfPageFormat.mm, top: i.yMm * PdfPageFormat.mm,
-          child: pw.SizedBox(width: i.wMm * PdfPageFormat.mm, height: i.hMm * PdfPageFormat.mm,
-            child: pw.Image(pw.MemoryImage(Uint8List.fromList(ImageUtils.encodeJpg(pi, quality: 95))), fit: pw.BoxFit.fill))));
-      }
-      return pw.Stack(children: List<pw.Widget>.from(ws));
-    }));
-    await Printing.layoutPdf(onLayout: (_) async => doc.save());
-  }
+    final w = isPhoto ? 36.0 : 85.0;
 
-  @override
-  Widget build(BuildContext c) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('مكتب علاء الحديدي - الماسح الذكي', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-        backgroundColor: const Color(0xFF0284C7), foregroundColor: Colors.white,
-        actions: [
-          IconButton(icon: const Icon(Icons.print, size: 18), tooltip: 'طباعة', onPressed: _prnt),
-          // Google ML Kit Scanner — الزر الرئيسي للمسح
-          IconButton(
-            icon: const Icon(Icons.document_scanner, size: 20, color: Color(0xFF4ADE80)),
-            tooltip: 'مسح Google الذكي',
-            onPressed: _googleScan,
-          ),
-          IconButton(icon: const Icon(Icons.add_a_photo, size: 18), onPressed: () => _addImgs(ImageSource.camera)),
-          IconButton(icon: const Icon(Icons.photo_library, size: 18), onPressed: () => _addImgs(ImageSource.gallery)),
-        ],
+    final h = isPhoto
+        ? 45.0
+        : w * decoded.height / max(1, decoded.width);
+
+    final item = DocItem(
+      id: '${prefix}_${DateTime.now().microsecondsSinceEpoch}',
+      image: decoded,
+      bytes: Uint8List.fromList(
+        ImageUtils.encodeJpg(
+          decoded,
+          quality: 95,
+        ),
       ),
-      body: LayoutBuilder(builder: (_, cc) {
-        final sw = cc.maxWidth * 0.19, cw = cc.maxWidth - sw, tbh = 48.0;
-        final sc = min((cw - 20) / pwM, (cc.maxHeight - tbh - 20) / phM);
-        return Column(children: [
-          // شريط الأدوات
-          Container(height: tbh, padding: const EdgeInsets.symmetric(horizontal: 4),
-            decoration: const BoxDecoration(color: Color(0xFF1E293B)),
-            child: Row(children: [
-              const SizedBox(width: 4),
-              _tb('مستمسكات', _mode == 'docs', () => setState(() => _mode = 'docs')),
-              _tb('صور', _mode == 'photos', () => setState(() => _mode = 'photos')),
-              const Spacer(),
-              _tb('قص تلقائي', false, _autoCrop, const Color(0xFFF59E0B)),
-              _tb('قص يدوي', false, _manualCrop, const Color(0xFF06B6D4)),
-              _tb('ترتيب', false, _aln, const Color(0xFF10B981)),
-              _tb('تدوير', false, _rot, const Color(0xFF94A3B8)),
-              _tb('نسخ', false, _dup, const Color(0xFFA78BFA)),
-            ])),
-          Expanded(child: Row(children: [
-            // Sidebar
-            SizedBox(width: sw, child: Container(color: const Color(0xFFF1F5F9),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Container(margin: const EdgeInsets.all(4), padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: const Color(0xFF0369A1), borderRadius: BorderRadius.circular(4)),
-                  child: const Text('القياسات (سم)', textAlign: TextAlign.center,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white))),
-                if (_mode == 'docs') ...[
-                  _sz('بطاقة موحدة', '8.5 × 5.4', () => _resz(85, 54, curved: true)),
-                  _sz('بطاقة سكن', '8.8 × 5.8', () => _resz(88, 58, curved: true)),
-                  _sz('ورقة كاملة A4', '21 × 29.7', () => _resz(210, 297, curved: false), clr: const Color(0xFF0F766E)),
-                ] else ...[
-                  _sz('معاملة', '3.6 × 4.5', () => _resz(36, 45, p: true)),
-                  _sz('مصغر', '2.5 × 3.4', () => _resz(25, 34, p: true)),
-                ],
-                const Spacer(),
-                if (_sel != null)
-                  Padding(padding: const EdgeInsets.all(4), child: SizedBox(height: 30, child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)), padding: const EdgeInsets.symmetric(horizontal: 6)),
-                    onPressed: () => setState(() { _items.remove(_sel); _sel = null; }),
-                    icon: const Icon(Icons.delete_outline, size: 14),
-                    label: const Text('حذف', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold))))),
-              ]))),
-            // Canvas
-            Expanded(child: RepaintBoundary(child: Container(color: const Color(0xFF1E293B),
-              child: Center(child: Container(width: pwM * sc, height: phM * sc,
-                decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 12)]),
-                child: ClipRect(child: Stack(children: [
-                  for (int i = 0; i < _items.length; i++)
-                    _buildItem(_items[i], sc),
-                ]))))),
-            )),
-          ])),
-        ]);
-      }),
+      wMm: w,
+      hMm: h,
+      xMm: margin + (_items.length % 4) * 5,
+      yMm: margin + (_items.length ~/ 4) * 5,
+      photo: isPhoto,
+    );
+
+    setState(() {
+      _items.add(item);
+      _sel = item;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // القياسات
+  // ═══════════════════════════════════════════════════════════
+
+  void _resize(
+    double w,
+    double h, {
+    bool photo = false,
+    bool curved = false,
+  }) {
+    if (_sel == null) {
+      return;
+    }
+
+    setState(() {
+      _sel!.wMm = w;
+      _sel!.hMm = h;
+      _sel!.photo = photo;
+      _sel!.curvedCorners = curved;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // تدوير
+  // ═══════════════════════════════════════════════════════════
+
+  void _rotate() {
+    final item = _sel;
+
+    if (item == null) {
+      return;
+    }
+
+    setState(() {
+      item.rot = (item.rot + 90) % 360;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // نسخ
+  // ═══════════════════════════════════════════════════════════
+
+  void _duplicate() {
+    final item = _sel;
+
+    if (item == null) {
+      return;
+    }
+
+    final copy = item.duplicate();
+
+    setState(() {
+      _items.add(copy);
+      _sel = copy;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // حذف
+  // ═══════════════════════════════════════════════════════════
+
+  void _deleteSelected() {
+    final item = _sel;
+
+    if (item == null) {
+      return;
+    }
+
+    setState(() {
+      _items.removeWhere(
+        (element) => element.id == item.id,
+      );
+
+      _sel = _items.isEmpty ? null : _items.last;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ترتيب
+  // ═══════════════════════════════════════════════════════════
+
+  void _align() {
+    if (_items.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      double x = margin;
+      double y = margin;
+      double rowHeight = 0;
+
+      for (final item in _items) {
+        if (x + item.wMm > pageW - margin) {
+          x = margin;
+          y += rowHeight + 5;
+          rowHeight = 0;
+        }
+
+        item.xMm = x;
+        item.yMm = y;
+
+        x += item.wMm + 5;
+
+        rowHeight = max(
+          rowHeight,
+          item.hMm,
+        );
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // القص التلقائي
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _autoCrop() async {
+    final item = _sel;
+
+    if (item == null) {
+      _message(
+        'حدد صورة أولاً',
+        Colors.orange,
+      );
+      return;
+    }
+
+    final source = item.rotated;
+
+    await Future<void>.delayed(
+      Duration.zero,
+    );
+
+    final result = SmartCrop.detect(source);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!result.changed) {
+      _message(
+        'لم يتم اكتشاف حدود واضحة — استخدم القص اليدوي',
+        Colors.orange,
+      );
+      return;
+    }
+
+    setState(() {
+      item.replaceImage(result.image);
+    });
+
+    _message(
+      'تم القص التلقائي وتصحيح الميلان',
+      Colors.green,
     );
   }
 
-  Widget _buildItem(DocItem it, double sc) {
-    final act = _sel?.id == it.id;
-    final cr = it.curvedCorners ? BorderRadius.circular(3.5 * sc) : BorderRadius.zero;
-    return Positioned(
-      left: it.xMm * sc, top: it.yMm * sc, width: it.wMm * sc, height: it.hMm * sc,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => setState(() => _sel = it),
-        onPanUpdate: (d) => setState(() { it.xMm += d.delta.dx / sc; it.yMm += d.delta.dy / sc; }),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: cr,
-            border: Border.all(color: act ? Colors.blue : (it.photo ? Colors.red.withOpacity(0.4) : Colors.transparent), width: act ? 3 : 1),
-            boxShadow: act ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8)] : null),
-          child: ClipRRect(
-            borderRadius: cr,
-            child: Transform.rotate(angle: it.rot * pi / 180, child: Image.memory(it.bytes, fit: BoxFit.fill)),
+  // ═══════════════════════════════════════════════════════════
+  // القص اليدوي
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _manualCrop() async {
+    final item = _sel;
+
+    if (item == null) {
+      _message(
+        'حدد صورة أولاً',
+        Colors.orange,
+      );
+      return;
+    }
+
+    final source = item.rotated;
+
+    final result = await Navigator.of(context).push<img.Image>(
+      MaterialPageRoute(
+        builder: (_) => CropScreen(
+          image: source,
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    if (result.width < 20 || result.height < 20) {
+      _message(
+        'منطقة القص صغيرة جدًا',
+        Colors.orange,
+      );
+      return;
+    }
+
+    // أهم نقطة:
+    // يتم استبدال الصورة الأصلية فعليًا بالصورة المقصوصة.
+    setState(() {
+      item.replaceImage(result);
+      _sel = item;
+    });
+
+    _message(
+      'تم تطبيق القص بنجاح',
+      Colors.green,
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // الطباعة
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> _print() async {
+    if (_items.isEmpty) {
+      _message(
+        'لا توجد صور للطباعة',
+        Colors.orange,
+      );
+      return;
+    }
+
+    final document = pw.Document();
+
+    document.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: pw.EdgeInsets.zero,
+        build: (_) {
+          final widgets = <pw.Widget>[];
+
+          for (final item in _items) {
+            final image = item.rotated;
+
+            final bytes = Uint8List.fromList(
+              ImageUtils.encodeJpg(
+                image,
+                quality: 95,
+              ),
+            );
+
+            widgets.add(
+              pw.Positioned(
+                left: item.xMm * PdfPageFormat.mm,
+                top: item.yMm * PdfPageFormat.mm,
+                child: pw.SizedBox(
+                  width: item.wMm * PdfPageFormat.mm,
+                  height: item.hMm * PdfPageFormat.mm,
+                  child: pw.Image(
+                    pw.MemoryImage(bytes),
+                    fit: pw.BoxFit.fill,
+                  ),
+                ),
+              ),
+            );
+          }
+
+          return pw.Stack(
+            children: widgets,
+          );
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (_) async {
+        return document.save();
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // رسالة
+  // ═══════════════════════════════════════════════════════════
+
+  void _message(
+    String text,
+    Color color,
+  ) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            text,
+            textAlign: TextAlign.center,
+          ),
+          backgroundColor: color,
+          duration: const Duration(
+            seconds: 2,
+          ),
+        ),
+      );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Build
+  // ═══════════════════════════════════════════════════════════
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0284C7),
+        foregroundColor: Colors.white,
+        title: const Text(
+          'مكتب علاء الحديدي - الماسح الذكي',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'طباعة',
+            icon: const Icon(
+              Icons.print,
+              size: 19,
+            ),
+            onPressed: _print,
+          ),
+          IconButton(
+            tooltip: 'ماسح المستندات',
+            icon: const Icon(
+              Icons.document_scanner,
+              size: 21,
+            ),
+            onPressed: _googleScan,
+          ),
+          IconButton(
+            tooltip: 'الكاميرا',
+            icon: const Icon(
+              Icons.add_a_photo,
+              size: 19,
+            ),
+            onPressed: () {
+              _addImages(
+                ImageSource.camera,
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'المعرض',
+            icon: const Icon(
+              Icons.photo_library,
+              size: 19,
+            ),
+            onPressed: () {
+              _addImages(
+                ImageSource.gallery,
+              );
+            },
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (
+          context,
+          constraints,
+        ) {
+          final sidebarWidth =
+              constraints.maxWidth * 0.19;
+
+          final canvasWidth =
+              constraints.maxWidth -
+                  sidebarWidth;
+
+          const toolbarHeight = 50.0;
+
+          final scale = min(
+            (canvasWidth - 20) / pageW,
+            (constraints.maxHeight -
+                    toolbarHeight -
+                    20) /
+                pageH,
+          ).clamp(0.1, 10.0);
+
+          return Column(
+            children: [
+              _buildToolbar(),
+              Expanded(
+                child: Row(
+                  children: [
+                    _buildSidebar(
+                      sidebarWidth,
+                    ),
+                    Expanded(
+                      child: _buildCanvas(
+                        scale,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Toolbar
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildToolbar() {
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 4,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F172A),
+      ),
+      child: Row(
+        children: [
+          _toolButton(
+            'مستمسكات',
+            _mode == 'docs',
+            () {
+              setState(() {
+                _mode = 'docs';
+              });
+            },
+          ),
+          _toolButton(
+            'صور',
+            _mode == 'photos',
+            () {
+              setState(() {
+                _mode = 'photos';
+              });
+            },
+          ),
+          const Spacer(),
+          _toolButton(
+            'قص تلقائي',
+            false,
+            _autoCrop,
+            color: const Color(0xFFF59E0B),
+          ),
+          _toolButton(
+            'قص يدوي',
+            false,
+            _manualCrop,
+            color: const Color(0xFF06B6D4),
+          ),
+          _toolButton(
+            'ترتيب',
+            false,
+            _align,
+            color: const Color(0xFF10B981),
+          ),
+          _toolButton(
+            'تدوير',
+            false,
+            _rotate,
+            color: const Color(0xFF94A3B8),
+          ),
+          _toolButton(
+            'نسخ',
+            false,
+            _duplicate,
+            color: const Color(0xFFA78BFA),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Sidebar
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildSidebar(
+    double width,
+  ) {
+    return SizedBox(
+      width: width,
+      child: Container(
+        color: const Color(0xFFF1F5F9),
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              margin: const EdgeInsets.all(5),
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0369A1),
+                borderRadius:
+                    BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'القياسات (مم)',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 10,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            if (_mode == 'docs') ...[
+              _sizeButton(
+                'بطاقة موحدة',
+                '85 × 54',
+                () => _resize(
+                  85,
+                  54,
+                  curved: true,
+                ),
+              ),
+              _sizeButton(
+                'بطاقة سكن',
+                '88 × 58',
+                () => _resize(
+                  88,
+                  58,
+                  curved: true,
+                ),
+              ),
+              _sizeButton(
+                'ورقة A4',
+                '210 × 297',
+                () => _resize(
+                  210,
+                  297,
+                ),
+                color: const Color(0xFF0F766E),
+              ),
+            ] else ...[
+              _sizeButton(
+                'صورة 3.6 × 4.5',
+                '36 × 45',
+                () => _resize(
+                  36,
+                  45,
+                  photo: true,
+                ),
+              ),
+              _sizeButton(
+                'صورة 2.5 × 3.4',
+                '25 × 34',
+                () => _resize(
+                  25,
+                  34,
+                  photo: true,
+                ),
+              ),
+            ],
+            const Spacer(),
+            if (_sel != null)
+              Padding(
+                padding:
+                    const EdgeInsets.all(5),
+                child: SizedBox(
+                  height: 34,
+                  child: ElevatedButton.icon(
+                    style:
+                        ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(
+                        0xFFDC2626,
+                      ),
+                      foregroundColor:
+                          Colors.white,
+                      padding:
+                          const EdgeInsets.symmetric(
+                        horizontal: 5,
+                      ),
+                    ),
+                    onPressed:
+                        _deleteSelected,
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 15,
+                    ),
+                    label: const Text(
+                      'حذف',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Canvas
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildCanvas(
+    double scale,
+  ) {
+    return RepaintBoundary(
+      child: Container(
+        color: const Color(0xFF1E293B),
+        child: Center(
+          child: Container(
+            width: pageW * scale,
+            height: pageH * scale,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      Colors.black.withOpacity(
+                    0.45,
+                  ),
+                  blurRadius: 14,
+                ),
+              ],
+            ),
+            child: ClipRect(
+              child: Stack(
+                children: [
+                  for (final item in _items)
+                    _buildItem(
+                      item,
+                      scale,
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _tb(String l, bool sel, VoidCallback fn, [Color? clr]) => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: Material(color: Colors.transparent, child: InkWell(onTap: fn, borderRadius: BorderRadius.circular(6),
-      child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(color: sel ? (clr ?? const Color(0xFF0284C7)).withOpacity(0.25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6), border: Border.all(color: sel ? (clr ?? const Color(0xFF0284C7)) : Colors.white38, width: 1)),
-        child: Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: sel ? (clr ?? const Color(0xFF38BDF8)) : Colors.white70))))));
+  // ═══════════════════════════════════════════════════════════
+  // عنصر داخل الورقة
+  // ═══════════════════════════════════════════════════════════
 
-  Widget _sz(String t, String sub, VoidCallback fn, {Color clr = const Color(0xFF0369A1)}) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), child: SizedBox(height: 38, child: ElevatedButton(
-      style: ElevatedButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        backgroundColor: clr.withOpacity(0.06), foregroundColor: clr, side: BorderSide(color: clr.withOpacity(0.35)), elevation: 0),
-      onPressed: fn, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Text(t, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: clr)),
-        Text(sub, style: TextStyle(fontSize: 7, fontWeight: FontWeight.w500, color: clr.withOpacity(0.7)))]))));
+  Widget _buildItem(
+    DocItem item,
+    double scale,
+  ) {
+    final selected =
+        _sel?.id == item.id;
+
+    final radius = item.curvedCorners
+        ? BorderRadius.circular(
+            4 * scale,
+          )
+        : BorderRadius.zero;
+
+    return Positioned(
+      left: item.xMm * scale,
+      top: item.yMm * scale,
+      width: item.wMm * scale,
+      height: item.hMm * scale,
+      child: GestureDetector(
+        behavior:
+            HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _sel = item;
+          });
+        },
+        onPanUpdate: (details) {
+          setState(() {
+            item.xMm +=
+                details.delta.dx / scale;
+
+            item.yMm +=
+                details.delta.dy / scale;
+          });
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(
+              color: selected
+                  ? const Color(
+                      0xFF2563EB,
+                    )
+                  : Colors.transparent,
+              width: selected ? 2.5 : 1,
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: radius,
+            child: Transform.rotate(
+              angle:
+                  item.rot * pi / 180,
+              child: Image.memory(
+                item.bytes,
+                fit: BoxFit.fill,
+                gaplessPlayback: true,
+                filterQuality:
+                    FilterQuality.medium,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // أدوات
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _toolButton(
+    String text,
+    bool selected,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
+    final c = color ?? const Color(0xFF0284C7);
+
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 2,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius:
+              BorderRadius.circular(6),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 7,
+            ),
+            decoration: BoxDecoration(
+              color: selected
+                  ? c.withOpacity(0.22)
+                  : Colors.transparent,
+              borderRadius:
+                  BorderRadius.circular(6),
+              border: Border.all(
+                color: selected
+                    ? c
+                    : Colors.white24,
+              ),
+            ),
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight:
+                    FontWeight.w700,
+                color: selected
+                    ? c
+                    : Colors.white70,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sizeButton(
+    String title,
+    String subtitle,
+    VoidCallback onTap, {
+    Color color =
+        const Color(0xFF0369A1),
+  }) {
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 5,
+        vertical: 2,
+      ),
+      child: SizedBox(
+        height: 42,
+        child: ElevatedButton(
+          style:
+              ElevatedButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: Size.zero,
+            backgroundColor:
+                color.withOpacity(0.06),
+            foregroundColor: color,
+            elevation: 0,
+            side: BorderSide(
+              color:
+                  color.withOpacity(0.3),
+            ),
+            shape:
+                RoundedRectangleBorder(
+              borderRadius:
+                  BorderRadius.circular(
+                6,
+              ),
+            ),
+          ),
+          onPressed: onTap,
+          child: Column(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight:
+                      FontWeight.w700,
+                  color: color,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 7,
+                  color:
+                      color.withOpacity(
+                    0.7,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-// ═══════════════════════════════════════
-// شاشة القص اليدوي — سريعة مثل الموبايل
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// شاشة القص اليدوي
+// ═══════════════════════════════════════════════════════════════
+
 class CropScreen extends StatefulWidget {
   final img.Image image;
-  const CropScreen({super.key, required this.image});
-  @override State<CropScreen> createState() => _CropScreenState();
+
+  const CropScreen({
+    super.key,
+    required this.image,
+  });
+
+  @override
+  State<CropScreen> createState() =>
+      _CropScreenState();
 }
 
-class _CropScreenState extends State<CropScreen> {
-  double _x1 = 0.05, _y1 = 0.05;
-  double _x2 = 0.95, _y2 = 0.05;
-  double _x3 = 0.95, _y3 = 0.95;
-  double _x4 = 0.05, _y4 = 0.95;
-  EnhanceMode _filt = EnhanceMode.soft;
-  late Uint8List _disp;
-  double _imgW = 1, _imgH = 1;
-  double _imgL = 0, _imgT = 0;
+class _CropScreenState
+    extends State<CropScreen> {
+  double _x1 = 0.04;
+  double _y1 = 0.04;
+
+  double _x2 = 0.96;
+  double _y2 = 0.04;
+
+  double _x3 = 0.96;
+  double _y3 = 0.96;
+
+  double _x4 = 0.04;
+  double _y4 = 0.96;
+
+  EnhanceMode _filter =
+      EnhanceMode.soft;
+
+  late Uint8List _displayBytes;
+
+  double _imageLeft = 0;
+  double _imageTop = 0;
+  double _imageWidth = 1;
+  double _imageHeight = 1;
 
   @override
   void initState() {
     super.initState();
-    _disp = Uint8List.fromList(ImageUtils.encodeJpg(widget.image, quality: 92));
+
+    _displayBytes =
+        Uint8List.fromList(
+      ImageUtils.encodeJpg(
+        widget.image,
+        quality: 92,
+      ),
+    );
   }
 
-  void _done() {
-    // المرحلة 2: تصحيح منظور (Perspective Warp)
-    var res = ManualCrop.cropPerspective(widget.image, _x1, _y1, _x2, _y2, _x3, _y3, _x4, _y4);
-    // المرحلة 3: فلترة وتجميل
-    res = ImageEnhancer.apply(res, _filt);
-    Navigator.pop(context, res);
+  // ═══════════════════════════════════════════════════════════
+  // تطبيق القص
+  // ═══════════════════════════════════════════════════════════
+
+  void _apply() {
+    final valid = _validCorners();
+
+    if (!valid) {
+      _showMessage(
+        'رتب نقاط القص بشكل صحيح',
+        Colors.orange,
+      );
+      return;
+    }
+
+    img.Image result;
+
+    try {
+      result = ManualCrop.cropPerspective(
+        widget.image,
+        _x1,
+        _y1,
+        _x2,
+        _y2,
+        _x3,
+        _y3,
+        _x4,
+        _y4,
+      );
+    } catch (_) {
+      _showMessage(
+        'تعذر تنفيذ القص',
+        Colors.red,
+      );
+      return;
+    }
+
+    if (result.width < 20 ||
+        result.height < 20) {
+      _showMessage(
+        'منطقة القص صغيرة جدًا',
+        Colors.orange,
+      );
+      return;
+    }
+
+    // الفلتر يطبق على الناتج النهائي فقط.
+    result = _applyEnhancement(
+      result,
+      _filter,
+    );
+
+    // نرجع الصورة الجديدة فعليًا إلى MainScreen.
+    Navigator.of(context).pop(result);
   }
 
-  void _reset() {
-    setState(() { _x1 = _y1 = 0.05; _x2 = 0.95; _y2 = 0.05; _x3 = 0.95; _y3 = 0.95; _x4 = 0.05; _y4 = 0.95; });
-  }
+  // ═══════════════════════════════════════════════════════════
+  // كشف تلقائي داخل شاشة القص
+  // ═══════════════════════════════════════════════════════════
 
-  /// المرحلة 1: كشف الحواف التلقائي
   void _autoDetect() {
-    final corners = SmartCrop.detectCorners(widget.image);
-    if (corners != null) {
+    try {
+      final corners =
+          SmartCrop.detectCorners(
+        widget.image,
+      );
+
+      if (corners == null ||
+          corners.length < 8) {
+        _showMessage(
+          'لم يتم العثور على حدود واضحة',
+          Colors.orange,
+        );
+        return;
+      }
+
       setState(() {
-        _x1 = corners[0]; _y1 = corners[1];
-        _x2 = corners[2]; _y2 = corners[3];
-        _x3 = corners[4]; _y3 = corners[5];
-        _x4 = corners[6]; _y4 = corners[7];
+        _x1 = corners[0];
+        _y1 = corners[1];
+
+        _x2 = corners[2];
+        _y2 = corners[3];
+
+        _x3 = corners[4];
+        _y3 = corners[5];
+
+        _x4 = corners[6];
+        _y4 = corners[7];
       });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لم يتم اكتشاف المستند — اضبط الزوايا يدوياً'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
+    } catch (_) {
+      _showMessage(
+        'تعذر الكشف التلقائي',
+        Colors.orange,
       );
     }
   }
 
-  @override
-  Widget build(BuildContext c) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF111827),
-        leading: IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
-        title: Row(mainAxisSize: MainAxisSize.min, children: [
-          _chip('أصلي', _filt == EnhanceMode.none, () => setState(() => _filt = EnhanceMode.none)),
-          const SizedBox(width: 6),
-          _chip('تحسين ✨', _filt == EnhanceMode.soft, () => setState(() => _filt = EnhanceMode.soft)),
-          const SizedBox(width: 6),
-          _chip('أبيض وأسود', _filt == EnhanceMode.bw, () => setState(() => _filt = EnhanceMode.bw)),
-        ]),
-        actions: [
-          TextButton.icon(onPressed: _autoDetect, icon: const Icon(Icons.auto_fix_high, size: 16, color: Color(0xFF4ADE80)),
-            label: const Text('تحديد تلقائي', style: TextStyle(fontSize: 11, color: Color(0xFF4ADE80)))),
-          TextButton.icon(onPressed: _reset, icon: const Icon(Icons.refresh, size: 16, color: Colors.orange),
-            label: const Text('إعادة', style: TextStyle(fontSize: 11, color: Colors.orange))),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF10B981), padding: const EdgeInsets.symmetric(horizontal: 16)),
-            onPressed: _done, icon: const Icon(Icons.check, size: 18),
-            label: const Text('تطبيق ✓', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+  // ═══════════════════════════════════════════════════════════
+  // إعادة
+  // ═══════════════════════════════════════════════════════════
+
+  void _reset() {
+    setState(() {
+      _x1 = 0.04;
+      _y1 = 0.04;
+
+      _x2 = 0.96;
+      _y2 = 0.04;
+
+      _x3 = 0.96;
+      _y3 = 0.96;
+
+      _x4 = 0.04;
+      _y4 = 0.96;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // التحقق من النقاط
+  // ═══════════════════════════════════════════════════════════
+
+  bool _validCorners() {
+    final points = <Offset>[
+      Offset(_x1, _y1),
+      Offset(_x2, _y2),
+      Offset(_x3, _y3),
+      Offset(_x4, _y4),
+    ];
+
+    final area =
+        _polygonArea(points);
+
+    return area > 0.01;
+  }
+
+  double _polygonArea(
+    List<Offset> points,
+  ) {
+    double sum = 0;
+
+    for (int i = 0;
+        i < points.length;
+        i++) {
+      final a = points[i];
+
+      final b =
+          points[(i + 1) % points.length];
+
+      sum +=
+          a.dx * b.dy -
+          a.dy * b.dx;
+    }
+
+    return sum.abs() / 2;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // تحسين الصورة
+  // ═══════════════════════════════════════════════════════════
+
+  img.Image _applyEnhancement(
+    img.Image source,
+    EnhanceMode mode,
+  ) {
+    if (mode == EnhanceMode.none) {
+      return source;
+    }
+
+    final result =
+        img.Image.from(source);
+
+    for (int y = 0;
+        y < result.height;
+        y++) {
+      for (int x = 0;
+          x < result.width;
+          x++) {
+        final p =
+            result.getPixel(x, y);
+
+        double r = p.r.toDouble();
+        double g = p.g.toDouble();
+        double b = p.b.toDouble();
+
+        if (mode == EnhanceMode.bw) {
+          final gray =
+              0.299 * r +
+              0.587 * g +
+              0.114 * b;
+
+          final v =
+              gray > 150 ? 255 : 0;
+
+          result.setPixelRgba(
+            x,
+            y,
+            v,
+            v,
+            v,
+            p.a.toInt(),
+          );
+        } else {
+          // تحسين خفيف:
+          // رفع التباين والإضاءة بدون تدمير التفاصيل.
+          r = ((r - 128) * 1.08) + 134;
+          g = ((g - 128) * 1.08) + 134;
+          b = ((b - 128) * 1.08) + 134;
+
+          r = r.clamp(0, 255);
+          g = g.clamp(0, 255);
+          b = b.clamp(0, 255);
+
+          result.setPixelRgba(
+            x,
+            y,
+            r.round(),
+            g.round(),
+            b.round(),
+            p.a.toInt(),
+          );
+        }
+      }
+    }
+
+    return result;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // نقطة التحكم
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _handle(
+    double x,
+    double y,
+    void Function(
+      double,
+      double,
+    ) update,
+  ) {
+    return Positioned(
+      left:
+          _imageLeft +
+          x * _imageWidth -
+          29,
+      top:
+          _imageTop +
+          y * _imageHeight -
+          29,
+      child: GestureDetector(
+        behavior:
+            HitTestBehavior.opaque,
+        onPanUpdate: (details) {
+          final nx =
+              x +
+              details.delta.dx /
+                  _imageWidth;
+
+          final ny =
+              y +
+              details.delta.dy /
+                  _imageHeight;
+
+          update(
+            nx.clamp(0.0, 1.0),
+            ny.clamp(0.0, 1.0),
+          );
+        },
+        child: Container(
+          width: 58,
+          height: 58,
+          decoration:
+              const BoxDecoration(
+            color: Color(0xDD2563EB),
+            shape: BoxShape.circle,
           ),
+          foregroundDecoration:
+              BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white,
+              width: 3,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black54,
+                blurRadius: 7,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.open_with,
+              color: Colors.white,
+              size: 23,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Build شاشة القص
+  // ═══════════════════════════════════════════════════════════
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    return Scaffold(
+      backgroundColor:
+          Colors.black,
+      appBar: AppBar(
+        backgroundColor:
+            const Color(0xFF111827),
+        foregroundColor:
+            Colors.white,
+        leading: IconButton(
+          tooltip: 'إلغاء',
+          icon: const Icon(
+            Icons.close,
+          ),
+          onPressed: () {
+            Navigator.of(
+              context,
+            ).pop();
+          },
+        ),
+        title: SingleChildScrollView(
+          scrollDirection:
+              Axis.horizontal,
+          child: Row(
+            children: [
+              _filterButton(
+                'أصلي',
+                EnhanceMode.none,
+              ),
+              const SizedBox(width: 5),
+              _filterButton(
+                'تحسين',
+                EnhanceMode.soft,
+              ),
+              const SizedBox(width: 5),
+              _filterButton(
+                'أبيض وأسود',
+                EnhanceMode.bw,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed:
+                _autoDetect,
+            icon: const Icon(
+              Icons.auto_fix_high,
+              size: 17,
+              color: Color(
+                0xFF4ADE80,
+              ),
+            ),
+            label: const Text(
+              'تلقائي',
+              style: TextStyle(
+                fontSize: 11,
+                color: Color(
+                  0xFF4ADE80,
+                ),
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: _reset,
+            icon: const Icon(
+              Icons.refresh,
+              size: 17,
+              color: Colors.orange,
+            ),
+            label: const Text(
+              'إعادة',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange,
+              ),
+            ),
+          ),
+          const SizedBox(width: 3),
+          FilledButton.icon(
+            onPressed: _apply,
+            style:
+                FilledButton.styleFrom(
+              backgroundColor:
+                  const Color(
+                0xFF10B981,
+              ),
+              foregroundColor:
+                  Colors.white,
+              padding:
+                  const EdgeInsets.symmetric(
+                horizontal: 13,
+              ),
+            ),
+            icon: const Icon(
+              Icons.check,
+              size: 18,
+            ),
+            label: const Text(
+              'تطبيق',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 5),
         ],
       ),
-      body: LayoutBuilder(builder: (_, cc) {
-        final cw = cc.maxWidth, ch = cc.maxHeight;
-        // حساب موضع وحجم الصورة (BoxFit.contain)
-        final iw = widget.image.width.toDouble(), ih = widget.image.height.toDouble();
-        final sc2 = min(cw / iw, ch / ih);
-        _imgW = iw * sc2; _imgH = ih * sc2;
-        _imgL = (cw - _imgW) / 2; _imgT = (ch - _imgH) / 2;
+      body: LayoutBuilder(
+        builder: (
+          context,
+          constraints,
+        ) {
+          final cw =
+              constraints.maxWidth;
 
-        return GestureDetector(
-          onPanUpdate: (_) {}, // منع السحب العرضي للـ scaffold
-          child: Stack(children: [
-            // الصورة
-            Positioned(left: _imgL, top: _imgT, width: _imgW, height: _imgH,
-              child: Image.memory(_disp, fit: BoxFit.fill)),
-            // التراكب الداكن الخارجي + خطوط باستخدام CustomPaint واحد خفيف
-            Positioned.fill(child: CustomPaint(painter: _CropOverlayPainter(
-              x1: _imgL + _x1 * _imgW, y1: _imgT + _y1 * _imgH,
-              x2: _imgL + _x2 * _imgW, y2: _imgT + _y2 * _imgH,
-              x3: _imgL + _x3 * _imgW, y3: _imgT + _y3 * _imgH,
-              x4: _imgL + _x4 * _imgW, y4: _imgT + _y4 * _imgH,
-              cw: cw, ch: ch,
-            ))),
-            // نقاط السحب
-            _dot(_x1, _y1, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x1 = dx; _y1 = dy; })),
-            _dot(_x2, _y2, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x2 = dx; _y2 = dy; })),
-            _dot(_x3, _y3, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x3 = dx; _y3 = dy; })),
-            _dot(_x4, _y4, cw, ch, _imgL, _imgT, _imgW, _imgH, (dx, dy) => setState(() { _x4 = dx; _y4 = dy; })),
-          ]),
-        );
-      }),
+          final ch =
+              constraints.maxHeight;
+
+          final iw =
+              widget.image.width
+                  .toDouble();
+
+          final ih =
+              widget.image.height
+                  .toDouble();
+
+          final scale = min(
+            cw / iw,
+            ch / ih,
+          );
+
+          _imageWidth =
+              iw * scale;
+
+          _imageHeight =
+              ih * scale;
+
+          _imageLeft =
+              (cw - _imageWidth) / 2;
+
+          _imageTop =
+              (ch - _imageHeight) / 2;
+
+          return Stack(
+            children: [
+              // الصورة
+              Positioned(
+                left: _imageLeft,
+                top: _imageTop,
+                width: _imageWidth,
+                height: _imageHeight,
+                child: Image.memory(
+                  _displayBytes,
+                  fit: BoxFit.fill,
+                  filterQuality:
+                      FilterQuality.high,
+                ),
+              ),
+
+              // التعتيم والخطوط
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter:
+                        _CropOverlayPainter(
+                      x1: _imageLeft +
+                          _x1 *
+                              _imageWidth,
+                      y1: _imageTop +
+                          _y1 *
+                              _imageHeight,
+                      x2: _imageLeft +
+                          _x2 *
+                              _imageWidth,
+                      y2: _imageTop +
+                          _y2 *
+                              _imageHeight,
+                      x3: _imageLeft +
+                          _x3 *
+                              _imageWidth,
+                      y3: _imageTop +
+                          _y3 *
+                              _imageHeight,
+                      x4: _imageLeft +
+                          _x4 *
+                              _imageWidth,
+                      y4: _imageTop +
+                          _y4 *
+                              _imageHeight,
+                    ),
+                  ),
+                ),
+              ),
+
+              // نقاط التحكم
+              _handle(
+                _x1,
+                _y1,
+                (x, y) {
+                  setState(() {
+                    _x1 = x;
+                    _y1 = y;
+                  });
+                },
+              ),
+
+              _handle(
+                _x2,
+                _y2,
+                (x, y) {
+                  setState(() {
+                    _x2 = x;
+                    _y2 = y;
+                  });
+                },
+              ),
+
+              _handle(
+                _x3,
+                _y3,
+                (x, y) {
+                  setState(() {
+                    _x3 = x;
+                    _y3 = y;
+                  });
+                },
+              ),
+
+              _handle(
+                _x4,
+                _y4,
+                (x, y) {
+                  setState(() {
+                    _x4 = x;
+                    _y4 = y;
+                  });
+                },
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
-  Widget _dot(double rx, double ry, double cw, double ch, double il, double it, double iw, double ih, void Function(double, double) setXY) {
-    return Positioned(
-      left: il + rx * iw - 28, top: it + ry * ih - 28,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: (d) => setXY(
-          ((il + rx * iw + d.delta.dx - il) / iw).clamp(0.0, 1.0),
-          ((it + ry * ih + d.delta.dy - it) / ih).clamp(0.0, 1.0),
+  // ═══════════════════════════════════════════════════════════
+  // زر الفلتر
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _filterButton(
+    String title,
+    EnhanceMode mode,
+  ) {
+    final selected =
+        _filter == mode;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _filter = mode;
+        });
+      },
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 5,
         ),
-        child: Container(width: 56, height: 56,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2563EB).withOpacity(0.8),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 3),
-            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+        decoration:
+            BoxDecoration(
+          color: selected
+              ? const Color(
+                  0xFF2563EB,
+                )
+              : const Color(
+                  0xFF1E293B,
+                ),
+          borderRadius:
+              BorderRadius.circular(
+            20,
           ),
-          child: const Center(child: Icon(Icons.control_camera, color: Colors.white, size: 22)),
+          border: Border.all(
+            color: selected
+                ? Colors.transparent
+                : Colors.white24,
+          ),
+        ),
+        child: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight:
+                FontWeight.w600,
+          ),
         ),
       ),
     );
   }
 
-  Widget _chip(String t, bool sel, VoidCallback fn) {
-    return GestureDetector(onTap: fn,
-      child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: sel ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(20), border: Border.all(color: sel ? Colors.transparent : Colors.white24)),
-        child: Text(t, style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: sel ? FontWeight.bold : FontWeight.w500))),
-    );
+  void _showMessage(
+    String text,
+    Color color,
+  ) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            text,
+            textAlign: TextAlign.center,
+          ),
+          backgroundColor: color,
+          duration:
+              const Duration(
+            seconds: 2,
+          ),
+        ),
+      );
   }
 }
 
-/// CustomPainter سريع — يرسم التراكب والخطوط في طلقة واحدة
-class _CropOverlayPainter extends CustomPainter {
-  final double x1, y1, x2, y2, x3, y3, x4, y4;
-  final double cw, ch;
-  _CropOverlayPainter({required this.x1, required this.y1, required this.x2, required this.y2, required this.x3, required this.y3, required this.x4, required this.y4, required this.cw, required this.ch});
+// ═══════════════════════════════════════════════════════════════
+// رسام القص
+// ═══════════════════════════════════════════════════════════════
+
+class _CropOverlayPainter
+    extends CustomPainter {
+  final double x1;
+  final double y1;
+
+  final double x2;
+  final double y2;
+
+  final double x3;
+  final double y3;
+
+  final double x4;
+  final double y4;
+
+  const _CropOverlayPainter({
+    required this.x1,
+    required this.y1,
+    required this.x2,
+    required this.y2,
+    required this.x3,
+    required this.y3,
+    required this.x4,
+    required this.y4,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final dark = Paint()..color = Colors.black54;
-    final path = Path()..addRect(Rect.fromLTWH(0, 0, cw, ch));
+  void paint(
+    Canvas canvas,
+    Size size,
+  ) {
     final cropPath = Path()
-      ..moveTo(x1, y1)..lineTo(x2, y2)..lineTo(x3, y3)..lineTo(x4, y4)..close();
-    // المنطقة الخارجية
-    path.fillType = PathFillType.evenOdd;
-    path.addPath(cropPath, Offset.zero);
-    canvas.drawPath(path, dark);
-    // الخطوط المضيئة
-    final line = Paint()..color = const Color(0xFF22D3EE)..strokeWidth = 2.5..style = PaintingStyle.stroke;
-    canvas.drawPath(cropPath, line);
+      ..moveTo(x1, y1)
+      ..lineTo(x2, y2)
+      ..lineTo(x3, y3)
+      ..lineTo(x4, y4)
+      ..close();
+
+    // التعتيم الخارجي.
+    final overlayPath =
+        Path.combine(
+      PathOperation.difference,
+      Path()..addRect(
+        Rect.fromLTWH(
+          0,
+          0,
+          size.width,
+          size.height,
+        ),
+      ),
+      cropPath,
+    );
+
+    final darkPaint = Paint()
+      ..color =
+          Colors.black.withOpacity(
+        0.55,
+      );
+
+    canvas.drawPath(
+      overlayPath,
+      darkPaint,
+    );
+
+    // حدود القص.
+    final borderPaint = Paint()
+      ..color =
+          const Color(0xFF22D3EE)
+      ..strokeWidth = 2.5
+      ..style =
+          PaintingStyle.stroke;
+
+    canvas.drawPath(
+      cropPath,
+      borderPaint,
+    );
+
+    // شبكة خفيفة داخل المستند.
+    final gridPaint = Paint()
+      ..color = Colors.white38
+      ..strokeWidth = 0.8;
+
+    final topX =
+        x1 + (x2 - x1) / 3;
+
+    final topY =
+        y1 + (y2 - y1) / 3;
+
+    final topX2 =
+        x1 + (x2 - x1) * 2 / 3;
+
+    final topY2 =
+        y1 + (y2 - y1) * 2 / 3;
+
+    final bottomX =
+        x4 + (x3 - x4) / 3;
+
+    final bottomY =
+        y4 + (y3 - y4) / 3;
+
+    final bottomX2 =
+        x4 + (x3 - x4) * 2 / 3;
+
+    final bottomY2 =
+        y4 + (y3 - y4) * 2 / 3;
+
+    canvas.drawLine(
+      Offset(topX, topY),
+      Offset(bottomX, bottomY),
+      gridPaint,
+    );
+
+    canvas.drawLine(
+      Offset(topX2, topY2),
+      Offset(bottomX2, bottomY2),
+      gridPaint,
+    );
+
+    final leftX =
+        x1 + (x4 - x1) / 3;
+
+    final leftY =
+        y1 + (y4 - y1) / 3;
+
+    final leftX2 =
+        x1 + (x4 - x1) * 2 / 3;
+
+    final leftY2 =
+        y1 + (y4 - y1) * 2 / 3;
+
+    final rightX =
+        x2 + (x3 - x2) / 3;
+
+    final rightY =
+        y2 + (y3 - y2) / 3;
+
+    final rightX2 =
+        x2 + (x3 - x2) * 2 / 3;
+
+    final rightY2 =
+        y2 + (y3 - y2) * 2 / 3;
+
+    canvas.drawLine(
+      Offset(leftX, leftY),
+      Offset(rightX, rightY),
+      gridPaint,
+    );
+
+    canvas.drawLine(
+      Offset(leftX2, leftY2),
+      Offset(rightX2, rightY2),
+      gridPaint,
+    );
   }
 
   @override
-  bool shouldRepaint(_CropOverlayPainter old) => old.x1 != x1 || old.y1 != y1 || old.x2 != x2 || old.y2 != y2 || old.x3 != x3 || old.y3 != y3 || old.x4 != x4 || old.y4 != y4;
+  bool shouldRepaint(
+    _CropOverlayPainter oldDelegate,
+  ) {
+    return oldDelegate.x1 != x1 ||
+        oldDelegate.y1 != y1 ||
+        oldDelegate.x2 != x2 ||
+        oldDelegate.y2 != y2 ||
+        oldDelegate.x3 != x3 ||
+        oldDelegate.y3 != y3 ||
+        oldDelegate.x4 != x4 ||
+        oldDelegate.y4 != y4;
+  }
 }
