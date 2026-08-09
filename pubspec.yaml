@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.8.0 <4.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -23,7 +23,7 @@ dependencies:
   # الطباعة ومشاركة PDF
   printing: ^5.13.1
 
-  # Google ML Kit Document Scanner - Android
+  # Google ML Kit Document Scanner
   google_mlkit_document_scanner: ^0.5.0
 
 dev_dependencies:
