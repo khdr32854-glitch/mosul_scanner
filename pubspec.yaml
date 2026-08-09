@@ -1,5 +1,5 @@
 name: mosul_scanner
-description: "Mosul Scanner - Smart Printing & Document Scanner App"
+description: "تطبيق الماسح والطباعة الاحترافي - مكتب علاء الحديدي"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,20 +11,23 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # اختيار الصور من الكاميرا أو المعرض
+  # 1. ماسح جوجل الذكي للقص والتعديل التلقائي (من الكاميرا والمعرض)
+  google_mlkit_document_scanner: ^0.2.0
+
+  # 2. التقاط الصور واختيارها من المعرض
   image_picker: ^1.1.2
 
-  # معالجة الصور والقص والتدوير وتصحيح المنظور
+  # 3. معالجة وتدوير وفلترة الصور بـ Dart
   image: ^4.2.0
 
-  # إنشاء ملفات PDF
+  # 4. إنشاء وبناء ملفات الـ PDF
   pdf: ^3.10.8
 
-  # الطباعة ومشاركة PDF
+  # 5. معايشة وطباعة الـ PDF المباشرة
   printing: ^5.13.1
 
-  # Google ML Kit Document Scanner
-  google_mlkit_document_scanner: ^0.5.0
+  # 6. الأيقونات الاحترافية
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
@@ -34,3 +37,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # إذا كان لديك أصول أو صور إضافية يمكنك إلغاء التعليق عنها هنا
+  # assets:
+  #   - assets/
