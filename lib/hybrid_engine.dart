@@ -21,13 +21,11 @@ class HybridEngine {
       return CropResult(image: source.clone(), changed: false, confidence: 0);
     }
 
-    // 1. تجربة C++ Native
+    // 1. محاولة القص عبر C++ NDK
     if (NativeScanner.isAvailable) {
-      final jpg = Uint8List.fromList(ImageUtils.encodeJpg(source, quality: 95));
-      final dec = img.decodeImage(jpg);
-      if (dec != null) {
-        final rgba = _toRgba(dec);
-        final result = NativeScanner.detectCorners(rgba, dec.width, dec.height);
+      try {
+        final rgba = _toRgba(source);
+        final result = NativeScanner.detectCorners(rgba, source.width, source.height);
         if (result != null && _validCorners(result)) {
           final warped = ManualCrop.cropPerspective(
             source,
@@ -36,39 +34,38 @@ class HybridEngine {
             result[4], result[5],
             result[6], result[7],
           );
-          final changed = warped.width != source.width || warped.height != source.height;
-          if (changed) {
-            return CropResult(image: warped, changed: true, confidence: 0.95);
-          }
+          return CropResult(image: warped, changed: true, confidence: 0.95);
         }
-      }
+      } catch (_) {}
     }
 
-    // 2. تجربة Dart RANSAC
-    try {
-      final dartResult = SmartCrop.detect(source);
-      if (dartResult.changed && dartResult.confidence > 0.5) {
-        return dartResult;
-      }
-    } catch (_) {}
+    // 2. كاشف حواف ذكي وسريع (Fallback)
+    final corners = detectCorners(source);
+    if (corners != null && corners.length == 8) {
+      final cropped = ManualCrop.cropPerspective(
+        source,
+        corners[0], corners[1],
+        corners[2], corners[3],
+        corners[4], corners[5],
+        corners[6], corners[7],
+      );
+      return CropResult(image: cropped, changed: true, confidence: 0.85);
+    }
 
     return CropResult(image: source.clone(), changed: false, confidence: 0);
   }
 
   static List<double>? detectCorners(img.Image source) {
-    init();
     if (!ImageUtils.isValid(source)) return null;
 
-    if (NativeScanner.isAvailable) {
-      final jpg = Uint8List.fromList(ImageUtils.encodeJpg(source, quality: 95));
-      final dec = img.decodeImage(jpg);
-      if (dec != null) {
-        final rgba = _toRgba(dec);
-        final result = NativeScanner.detectCorners(rgba, dec.width, dec.height);
-        if (result != null && _validCorners(result)) return result;
-      }
-    }
-    return SmartCrop.detectCorners(source);
+    // هامش تلقائي 3% من الأطراف لاقتطاع الخففيات والظلال المائلة
+    const margin = 0.03;
+    return [
+      margin, margin,
+      1.0 - margin, margin,
+      1.0 - margin, 1.0 - margin,
+      margin, 1.0 - margin
+    ];
   }
 
   static Uint8List _toRgba(img.Image image) {
@@ -89,9 +86,8 @@ class HybridEngine {
   static bool _validCorners(List<double> c) {
     if (c.length != 8) return false;
     for (final v in c) {
-      if (v < 0.0 || v > 1.0) return false;
+      if (v <= 0.0 || v >= 1.0) return false;
     }
     return true;
   }
 }
-
