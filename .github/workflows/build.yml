@@ -20,6 +20,19 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Create Android Structure & Fix Permissions
+        run: |
+          flutter create . --platforms=android --org com.example
+          
+          # حقن أذونات الكاميرا والتخزين تلقائياً داخل AndroidManifest.xml بعد إنشائه
+          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST_PATH" ]; then
+            sed -i '/<application/i \    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>' "$MANIFEST_PATH"
+            echo "Successfully injected permissions into AndroidManifest.xml"
+          else
+            echo "AndroidManifest.xml not found!"
+          fi
+
       - name: Get Dependencies
         run: flutter pub get
 
