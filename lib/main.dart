@@ -1,3 +1,111 @@
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+
+import 'crop_engine.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MosulScannerApp());
+}
+
+class MosulScannerApp extends StatelessWidget {
+  const MosulScannerApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'مكتب علاء الحديدي - الماسح والطباعة الذكية',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+      home: const MainScannerScreen(),
+    );
+  }
+}
+
+class DocumentItem {
+  String id;
+  img.Image image;
+  Uint8List cachedBytes;
+  double widthMm;
+  double heightMm;
+  double xMm;
+  double yMm;
+  int rotationAngle;
+  bool isPhotoMode;
+  bool hasCurvedCorners;
+
+  DocumentItem({
+    required this.id,
+    required this.image,
+    required this.cachedBytes,
+    required this.widthMm,
+    required this.heightMm,
+    required this.xMm,
+    required this.yMm,
+    this.rotationAngle = 0,
+    this.isPhotoMode = false,
+    this.hasCurvedCorners = false,
+  });
+
+  img.Image get rotatedImage {
+    if (rotationAngle % 360 == 0) return image;
+    final normalized = (rotationAngle % 360 + 360) % 360;
+    if (normalized == 90) return img.copyRotate(image, angle: 90);
+    if (normalized == 180) return img.copyRotate(image, angle: 180);
+    if (normalized == 270) return img.copyRotate(image, angle: 270);
+    return image;
+  }
+
+  void applyRotation() {
+    if (rotationAngle % 360 == 0) return;
+    image = rotatedImage;
+    cachedBytes = Uint8List.fromList(ImageUtils.encodeJpg(image));
+    final temp = widthMm;
+    widthMm = heightMm;
+    heightMm = temp;
+    rotationAngle = 0;
+  }
+
+  void replaceImage(img.Image newImg) {
+    image = newImg;
+    cachedBytes = Uint8List.fromList(ImageUtils.encodeJpg(newImg));
+    rotationAngle = 0;
+    heightMm = (newImg.height.toDouble() / newImg.width.toDouble()) * widthMm;
+  }
+}
+
+class MainScannerScreen extends StatefulWidget {
+  const MainScannerScreen({super.key});
+
+  @override
+  State<MainScannerScreen> createState() => _MainScannerScreenState();
+}
+
+class _MainScannerScreenState extends State<MainScannerScreen> {
+  final List<DocumentItem> _items = [];
+  DocumentItem? _activeItem;
+  final ImagePicker _picker = ImagePicker();
+  String _activeTabMode = 'docs';
+
+  static const double pageWidthMm = 210.0;
+  static const double pageHeightMm = 297.0;
+  static const double pageMarginMm = 10.0;
+
+  /// فتح ماسح Google ML Kit الرسمي الذكي
+  void _googleScan() async {
+    try {
+      final paths = await GoogleScanner.scan();
+      if (paths == null || paths.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم إلغاء المسح'), backgroundColor: Colors.grey, duration: Duration(seconds: 1)),
           );
         }
         return;
@@ -24,25 +132,24 @@
           _activeItem = item;
         });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        _addNewImages(ImageSource.camera);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في تشغيل ماسح جوجل: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }
 
   void _addNewImages(ImageSource source) async {
-    final List<XFile> pickedFiles = [];
-    if (source == ImageSource.gallery) {
-      final files = await _picker.pickMultiImage();
-      pickedFiles.addAll(files);
-    } else {
-      final file = await _picker.pickImage(source: source, imageQuality: 95);
-      if (file != null) pickedFiles.add(file);
+    if (source == ImageSource.camera) {
+      _googleScan();
+      return;
     }
 
-    for (int i = 0; i < pickedFiles.length; i++) {
-      final bytes = await File(pickedFiles[i].path).readAsBytes();
+    final files = await _picker.pickMultiImage();
+    for (int i = 0; i < files.length; i++) {
+      final bytes = await File(files[i].path).readAsBytes();
       final decodedImg = ImageUtils.decodeBytes(bytes);
 
       if (decodedImg != null) {
@@ -124,18 +231,6 @@
     });
   }
 
-  void _autoCropActiveItem() {
-    if (_activeItem == null) return;
-    final result = HybridEngine.autoCrop(_activeItem!.rotatedImage);
-    if (result.changed) {
-      setState(() => _activeItem!.replaceImage(result.image));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم القص والتحديد'), backgroundColor: Colors.teal, duration: Duration(seconds: 1)),
-      );
-    }
-  }
-
   void _manualCropActiveItem() async {
     if (_activeItem == null) return;
     final result = await Navigator.push<img.Image>(
@@ -208,7 +303,6 @@
                 _buildToolBtn('مستمسكات', _activeTabMode == 'docs', () => setState(() => _activeTabMode = 'docs')),
                 _buildToolBtn('صور', _activeTabMode == 'photos', () => setState(() => _activeTabMode = 'photos')),
                 const VerticalDivider(color: Colors.white24, indent: 6, endIndent: 6),
-                _buildToolBtn('قص تلقائي ✨', false, _autoCropActiveItem, const Color(0xFFF59E0B)),
                 _buildToolBtn('قص يدوي ✂️', false, _manualCropActiveItem, const Color(0xFF06B6D4)),
                 _buildToolBtn('ترتيب 📐', false, _autoAlignItems, const Color(0xFF10B981)),
                 _buildToolBtn('تدوير 🔄', false, _rotateActiveItem, const Color(0xFF94A3B8)),
@@ -391,18 +485,6 @@ class _CropScreenState extends State<CropScreen> {
     Navigator.pop(context, cropped);
   }
 
-  void _autoDetectCorners() {
-    final corners = HybridEngine.detectCorners(widget.image);
-    if (corners != null && corners.length == 8) {
-      setState(() {
-        _x1 = corners[0]; _y1 = corners[1];
-        _x2 = corners[2]; _y2 = corners[3];
-        _x3 = corners[4]; _y3 = corners[5];
-        _x4 = corners[6]; _y4 = corners[7];
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -420,7 +502,6 @@ class _CropScreenState extends State<CropScreen> {
           ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.auto_fix_high, color: Color(0xFF4ADE80)), onPressed: _autoDetectCorners),
           IconButton(icon: const Icon(Icons.check, color: Colors.green), onPressed: _applyCrop),
         ],
       ),
