@@ -5,14 +5,12 @@ import 'package:image/image.dart' as img;
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 /// ===============================================================
-/// 1. Google ML Kit Scanner (الماسح الذكي الرسمية)
+/// 1. Google ML Kit Scanner (ماسح جوجل الذكي المتوافق)
 /// ===============================================================
 class GoogleScanner {
   static Future<List<String>?> scan() async {
     final options = DocumentScannerOptions(
-      documentFormats: const {DocumentFormat.jpeg},
       pageLimit: 10,
-      mode: ScannerMode.full,
       isGalleryImport: true,
     );
 
@@ -31,7 +29,7 @@ class GoogleScanner {
 }
 
 /// ===============================================================
-/// 2. Image Utilities (أدوات معالجة الصورة)
+/// 2. Image Utilities
 /// ===============================================================
 class ImageUtils {
   static img.Image? decodeBytes(Uint8List bytes) {
@@ -56,7 +54,7 @@ class ImageUtils {
 }
 
 /// ===============================================================
-/// 3. Crop Result Model (نموذج نتيجة القص)
+/// 3. Crop Result Model
 /// ===============================================================
 class CropResult {
   final img.Image image;
@@ -71,7 +69,7 @@ class CropResult {
 }
 
 /// ===============================================================
-/// 4. Image Enhancer & EnhanceMode (فلاتر المعالجة)
+/// 4. Image Enhancer & EnhanceMode
 /// ===============================================================
 enum EnhanceMode { none, soft, bw }
 
@@ -99,7 +97,7 @@ class ImageEnhancer {
 }
 
 /// ===============================================================
-/// 5. Manual Perspective Crop (القص اليدوي وتصحيح المنظور)
+/// 5. Manual Perspective Crop
 /// ===============================================================
 class ManualCrop {
   static img.Image cropPerspective(
@@ -127,7 +125,7 @@ class ManualCrop {
 }
 
 /// ===============================================================
-/// 6. Smart Crop Fallback (القص الاحتياطي)
+/// 6. Smart Crop Fallback
 /// ===============================================================
 class SmartCrop {
   static CropResult detect(img.Image source) {
@@ -136,22 +134,6 @@ class SmartCrop {
     }
 
     const margin = 0.01;
-    final cropped = ManualCrop.cropPerspective(
-      source,
-      margin, margin,
-      1.0 - margin, margin,
-      1.0 - margin, 1.0 - margin,
-      margin, 1.0 - margin,
-    );
-
-    return CropResult(image: cropped, changed: true, confidence: 0.85);
-  }
-
-  static List<double>? detectCorners(img.Image source) {
-    if (!ImageUtils.isValid(source)) return null;
-    return [0.05, 0.05, 0.95, 0.05, 0.95, 0.95, 0.05, 0.95];
-  }
-}
     final cropped = ManualCrop.cropPerspective(
       source,
       margin, margin,
