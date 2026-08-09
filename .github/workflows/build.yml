@@ -20,19 +20,8 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Create Android Structure
-        run: |
-          rm -rf android
-          flutter create . --platforms=android --org com.example
-
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build APK Release
         run: flutter build apk --release --no-tree-shake-icons
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: mosul-scanner-apk
-          path: build/app/outputs/apk/release/app-release.apk
