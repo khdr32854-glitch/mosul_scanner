@@ -342,13 +342,32 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   void _done() {
-    var res = ManualCrop.cropFromPoints(widget.image, _x1, _y1, _x2, _y2, _x3, _y3, _x4, _y4);
+    // المرحلة 2: تصحيح منظور (Perspective Warp)
+    var res = ManualCrop.cropPerspective(widget.image, _x1, _y1, _x2, _y2, _x3, _y3, _x4, _y4);
+    // المرحلة 3: فلترة وتجميل
     res = ImageEnhancer.apply(res, _filt);
     Navigator.pop(context, res);
   }
 
   void _reset() {
     setState(() { _x1 = _y1 = 0.05; _x2 = 0.95; _y2 = 0.05; _x3 = 0.95; _y3 = 0.95; _x4 = 0.05; _y4 = 0.95; });
+  }
+
+  /// المرحلة 1: كشف الحواف التلقائي
+  void _autoDetect() {
+    final corners = SmartCrop.detectCorners(widget.image);
+    if (corners != null) {
+      setState(() {
+        _x1 = corners[0]; _y1 = corners[1];
+        _x2 = corners[2]; _y2 = corners[3];
+        _x3 = corners[4]; _y3 = corners[5];
+        _x4 = corners[6]; _y4 = corners[7];
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لم يتم اكتشاف المستند — اضبط الزوايا يدوياً'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
+      );
+    }
   }
 
   @override
@@ -366,6 +385,8 @@ class _CropScreenState extends State<CropScreen> {
           _chip('أبيض وأسود', _filt == EnhanceMode.bw, () => setState(() => _filt = EnhanceMode.bw)),
         ]),
         actions: [
+          TextButton.icon(onPressed: _autoDetect, icon: const Icon(Icons.auto_fix_high, size: 16, color: Color(0xFF4ADE80)),
+            label: const Text('تحديد تلقائي', style: TextStyle(fontSize: 11, color: Color(0xFF4ADE80)))),
           TextButton.icon(onPressed: _reset, icon: const Icon(Icons.refresh, size: 16, color: Colors.orange),
             label: const Text('إعادة', style: TextStyle(fontSize: 11, color: Colors.orange))),
           FilledButton.icon(
