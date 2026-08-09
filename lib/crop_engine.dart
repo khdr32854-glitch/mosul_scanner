@@ -103,151 +103,379 @@ class PerspectiveWarp {
   }
 }
 
+
 /// ═══════════════════════════════════════
-/// تحسين — CLAHE + Light Sharpen
+/// القص الذكي متعدد الأشكال — v11
+///
+/// المبدأ:
+/// 1) لا نفترض أن المستند مستطيل محاذٍ للصورة.
+/// 2) نبحث عن أكبر مجموعة حواف مترابطة، وليس أقوى مستطيل فقط.
+/// 3) نعطي الأولوية للمستند الكبير حتى لا نختار بطاقة/إطارًا داخل
+///    المستند بالخطأ.
+/// 4) نستخرج أربع زوايا تقريبية من شكل الحواف.
+/// 5) إذا كانت الزوايا صالحة نستخدم Perspective Warp لتصحيح الميلان.
+/// 6) إذا لم تكن الثقة كافية نرجع للصورة الأصلية بدل قص خاطئ.
+///
+/// هذا مهم لأن الصور الواقعية قد تحتوي على:
+/// - A4/A5 وإيصالات وبطاقات بأحجام مختلفة.
+/// - دوران وميلان ومنظور متفاوت.
+/// - حدود داخلية وبطاقات أو صور داخل الورقة.
+/// - خلفيات وإضاءة وظلال مختلفة.
 /// ═══════════════════════════════════════
-class ImageEnhancer {
-  static img.Image enhance(img.Image src) {
-    try {
-      var r = _clahe(src);
-      r = _lightSharpen(r);
-      return r;
-    } catch (_) { return img.adjustColor(src, brightness: 1.03, contrast: 1.08); }
+class SmartCrop {
+  static CropResult detect(img.Image src) {
+    if (src.width < 100 || src.height < 100) {
+      return CropResult(image: src, changed: false);
+    }
+
+    final corners = detectCorners(src);
+    if (corners == null) {
+      return CropResult(image: src, changed: false);
+    }
+
+    final px = <double>[
+      corners[0] * src.width,
+      corners[1] * src.height,
+      corners[2] * src.width,
+      corners[3] * src.height,
+      corners[4] * src.width,
+      corners[5] * src.height,
+      corners[6] * src.width,
+      corners[7] * src.height,
+    ];
+
+    final area = _quadArea(
+      px[0], px[1], px[2], px[3], px[4], px[5], px[6], px[7],
+    );
+    final imageArea = src.width * src.height;
+    final ratio = area / imageArea;
+
+    // منع قصات صغيرة جدًا أو نتيجة شبه مساوية للصورة كلها بسبب الضوضاء.
+    if (ratio < 0.08) {
+      return CropResult(image: src, changed: false);
+    }
+
+    // إذا كان الكشف يغطي تقريبًا كل الصورة، لا نعيد قصها بلا داعٍ.
+    if (ratio > 0.94) {
+      return CropResult(image: src, changed: false);
+    }
+
+    final warped = PerspectiveWarp.warp(
+      src,
+      px[0], px[1], px[2], px[3],
+      px[4], px[5], px[6], px[7],
+    );
+
+    if (warped.width < 30 || warped.height < 30) {
+      return CropResult(image: src, changed: false);
+    }
+
+    return CropResult(image: warped, changed: true);
   }
 
-  static img.Image _clahe(img.Image src) {
-    final w=src.width,h=src.height;
-    final result=img.Image(width:w,height:h);
-    const tile=32,blend=0.65;
-    for(int ty=0;ty<h;ty+=tile)for(int tx=0;tx<w;tx+=tile){
-      final ex=min(tx+tile,w),ey=min(ty+tile,h);
-      final hr=List.filled(256,0),hg=List.filled(256,0),hb=List.filled(256,0);int cnt=0;
-      for(int y=ty;y<ey;y++)for(int x=tx;x<ex;x++){final p=src.getPixel(x,y);hr[p.r.toInt()]++;hg[p.g.toInt()]++;hb[p.b.toInt()]++;cnt++;}
-      final cr=_buildCdf(hr,cnt),cg=_buildCdf(hg,cnt),cb=_buildCdf(hb,cnt);
-      for(int y=ty;y<ey;y++)for(int x=tx;x<ex;x++){
-        final p=src.getPixel(x,y);
-        final r=(cr[p.r.toInt()]*blend+p.r.toInt()*(1-blend)).round().clamp(0,255);
-        final g=(cg[p.g.toInt()]*blend+p.g.toInt()*(1-blend)).round().clamp(0,255);
-        final b=(cb[p.b.toInt()]*blend+p.b.toInt()*(1-blend)).round().clamp(0,255);
-        result.setPixelRgba(x,y,r,g,b,p.a.toInt());
+  /// كشف الزوايا الأربع كنسب 0..1.
+  /// النقاط بالترتيب: أعلى-يسار، أعلى-يمين، أسفل-يمين، أسفل-يسار.
+  static List<double>? detectCorners(img.Image src) {
+    if (src.width < 100 || src.height < 100) return null;
+
+    final data = _detectCandidate(src);
+    if (data == null) return null;
+
+    final r = data;
+    final pts = <double>[
+      r.tlX / data.sw, r.tlY / data.sh,
+      r.trX / data.sw, r.trY / data.sh,
+      r.brX / data.sw, r.brY / data.sh,
+      r.blX / data.sw, r.blY / data.sh,
+    ];
+
+    // هامش صغير جدًا حتى لا نخسر الحواف بسبب التوسيع.
+    const pad = 0.008;
+    for (int i = 0; i < pts.length; i += 2) {
+      pts[i] = (pts[i] + (pts[i] < 0.5 ? -pad : pad)).clamp(0.0, 1.0);
+      pts[i + 1] =
+          (pts[i + 1] + (pts[i + 1] < 0.5 ? -pad : pad)).clamp(0.0, 1.0);
+    }
+    return pts;
+  }
+
+  static _Candidate? _detectCandidate(img.Image src) {
+    // حجم صغير نسبيًا حتى يبقى القص التلقائي سريعًا على الهاتف.
+    const target = 320;
+    final ratio = max(src.width, src.height) / target;
+    final sw = max(80, (src.width / ratio).round());
+    final sh = max(80, (src.height / ratio).round());
+
+    var gray = img.grayscale(img.copyResize(src, width: sw, height: sh));
+    gray = img.gaussianBlur(gray, radius: 2);
+
+    final edges = _makeEdges(gray);
+    final connected = _connectEdgesWithSize(edges, sw, sh);
+
+    final candidates = <_Candidate>[];
+    final visited = List<bool>.filled(sw * sh, false);
+    final queue = <int>[];
+
+    for (int y = 1; y < sh - 1; y++) {
+      for (int x = 1; x < sw - 1; x++) {
+        final start = y * sw + x;
+        if (visited[start] || !connected[start]) continue;
+
+        queue.clear();
+        queue.add(start);
+        visited[start] = true;
+
+        int head = 0;
+        int count = 0;
+        int minX = x, maxX = x, minY = y, maxY = y;
+
+        double minSum = double.infinity;
+        double maxSum = -double.infinity;
+        double minDiff = double.infinity;
+        double maxDiff = -double.infinity;
+
+        int tlX = x, tlY = y;
+        int trX = x, trY = y;
+        int brX = x, brY = y;
+        int blX = x, blY = y;
+
+        while (head < queue.length) {
+          final idx = queue[head++];
+          final py = idx ~/ sw;
+          final px = idx - py * sw;
+          count++;
+
+          if (px < minX) minX = px;
+          if (px > maxX) maxX = px;
+          if (py < minY) minY = py;
+          if (py > maxY) maxY = py;
+
+          final sum = (px + py).toDouble();
+          final diff = (px - py).toDouble();
+
+          if (sum < minSum) {
+            minSum = sum; tlX = px; tlY = py;
+          }
+          if (sum > maxSum) {
+            maxSum = sum; brX = px; brY = py;
+          }
+          if (diff < minDiff) {
+            minDiff = diff; blX = px; blY = py;
+          }
+          if (diff > maxDiff) {
+            maxDiff = diff; trX = px; trY = py;
+          }
+
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              if (dx == 0 && dy == 0) continue;
+              final nx = px + dx;
+              final ny = py + dy;
+              if (nx < 1 || nx >= sw - 1 || ny < 1 || ny >= sh - 1) {
+                continue;
+              }
+              final ni = ny * sw + nx;
+              if (!visited[ni] && connected[ni]) {
+                visited[ni] = true;
+                queue.add(ni);
+              }
+            }
+          }
+        }
+
+        final bw = maxX - minX + 1;
+        final bh = maxY - minY + 1;
+        final bboxArea = bw * bh;
+        final imageArea = sw * sh;
+
+        // نرفض الضوضاء الصغيرة جدًا.
+        if (count < max(30, imageArea ~/ 5000)) continue;
+        if (bw < sw * 0.12 || bh < sh * 0.08) continue;
+        if (bboxArea < imageArea * 0.07) continue;
+
+        // نستخرج زوايا من أقصى نقاط الشكل.
+        final qArea = _quadArea(
+          tlX, tlY, trX, trY,
+          brX, brY, blX, blY,
+        );
+        if (qArea < imageArea * 0.06) continue;
+
+        final coverage = (qArea / imageArea).clamp(0.0, 1.0);
+        final componentDensity = (count / bboxArea).clamp(0.0, 1.0);
+
+        // العامل الأهم هو المساحة. هذا يمنع اختيار بطاقة صغيرة داخل ورقة.
+        // الكثافة تستخدم فقط لكسر التعادل بين مرشحين متقاربين.
+        final score = coverage * 0.82 + componentDensity * 0.18;
+
+        candidates.add(_Candidate(
+          sw: sw, sh: sh,
+          tlX: tlX, tlY: tlY,
+          trX: trX, trY: trY,
+          brX: brX, brY: brY,
+          blX: blX, blY: blY,
+          score: score,
+          areaRatio: coverage,
+        ));
       }
     }
-    return result;
-  }
 
-  static List<int> _buildCdf(List<int> hist,int cnt){
-    final clip=(cnt/256*2.5).round();
-    final c=List<int>.from(hist);int excess=0;
-    for(int i=0;i<256;i++){if(c[i]>clip){excess+=c[i]-clip;c[i]=clip;}}
-    double add=excess/256,sum=0;
-    final cdf=List.filled(256,0);
-    for(int i=0;i<256;i++){sum+=c[i]+add;cdf[i]=(sum*255/cnt).round().clamp(0,255);}
-    return cdf;
-  }
+    if (candidates.isEmpty) {
+      // fallback: مستطيل خارجي فقط عندما لا نستطيع بناء شكل موثوق.
+      final rect = _fallbackRect(edges, sw, sh);
+      if (rect == null) return null;
 
-  static img.Image _lightSharpen(img.Image src){
-    final w=src.width,h=src.height,result=img.Image(width:w,height:h);
-    for(int y=0;y<h;y++)for(int x=0;x<w;x++){final p=src.getPixel(x,y);result.setPixelRgba(x,y,p.r.toInt(),p.g.toInt(),p.b.toInt(),255);}
-    for(int y=1;y<h-1;y++)for(int x=1;x<w-1;x++){
-      final c=src.getPixel(x,y),u=src.getPixel(x,y-1),d=src.getPixel(x,y+1),lf=src.getPixel(x-1,y),rt=src.getPixel(x+1,y);
-      result.setPixelRgba(x,y,
-        (c.r.toInt()*4.8-u.r.toInt()*.8-d.r.toInt()*.8-lf.r.toInt()*.8-rt.r.toInt()*.8).round().clamp(0,255),
-        (c.g.toInt()*4.8-u.g.toInt()*.8-d.g.toInt()*.8-lf.g.toInt()*.8-rt.g.toInt()*.8).round().clamp(0,255),
-        (c.b.toInt()*4.8-u.b.toInt()*.8-d.b.toInt()*.8-lf.b.toInt()*.8-rt.b.toInt()*.8).round().clamp(0,255),
-        c.a.toInt());
+      final areaRatio =
+          ((rect[2] - rect[0]) * (rect[3] - rect[1])) / (sw * sh);
+      if (areaRatio < 0.08 || areaRatio > 0.94) return null;
+
+      return _Candidate(
+        sw: sw, sh: sh,
+        tlX: rect[0], tlY: rect[1],
+        trX: rect[2], trY: rect[1],
+        brX: rect[2], brY: rect[3],
+        blX: rect[0], blY: rect[3],
+        score: areaRatio,
+        areaRatio: areaRatio,
+      );
     }
-    return result;
+
+    candidates.sort((a, b) => b.score.compareTo(a.score));
+    final best = candidates.first;
+
+    // تحويل إحداثيات الصورة المصغرة إلى إحداثيات الصورة الأصلية.
+    final sx = src.width / sw;
+    final sy = src.height / sh;
+
+    return _Candidate(
+      sw: src.width, sh: src.height,
+      tlX: best.tlX * sx, tlY: best.tlY * sy,
+      trX: best.trX * sx, trY: best.trY * sy,
+      brX: best.brX * sx, brY: best.brY * sy,
+      blX: best.blX * sx, blY: best.blY * sy,
+      score: best.score,
+      areaRatio: best.areaRatio,
+    );
   }
 
-  static img.Image blackWhite(img.Image src){
-    var gray=img.grayscale(src);
-    gray=img.gaussianBlur(gray,radius:1);
-    return _adaptiveThreshold(gray,31,8);
-  }
+  static List<bool> _makeEdges(img.Image gray) {
+    final w = gray.width, h = gray.height;
+    final out = List<bool>.filled(w * h, false);
 
-  static img.Image _adaptiveThreshold(img.Image gray,int blockSize,int C){
-    final w=gray.width,h=gray.height,half=blockSize~/2,result=img.Image(width:w,height:h);
-    for(int y=0;y<h;y++)for(int x=0;x<w;x++){
-      int sum=0,cnt=0;
-      for(int dy=-half;dy<=half;dy++)for(int dx=-half;dx<=half;dx++){
-        final nx=(x+dx).clamp(0,w-1),ny=(y+dy).clamp(0,h-1);
-        sum+=gray.getPixel(nx,ny).r.toInt();cnt++;
+    for (int y = 1; y < h - 1; y++) {
+      for (int x = 1; x < w - 1; x++) {
+        final tl = gray.getPixel(x - 1, y - 1).r.toInt();
+        final tc = gray.getPixel(x, y - 1).r.toInt();
+        final tr = gray.getPixel(x + 1, y - 1).r.toInt();
+        final ml = gray.getPixel(x - 1, y).r.toInt();
+        final mr = gray.getPixel(x + 1, y).r.toInt();
+        final bl = gray.getPixel(x - 1, y + 1).r.toInt();
+        final bc = gray.getPixel(x, y + 1).r.toInt();
+        final br = gray.getPixel(x + 1, y + 1).r.toInt();
+
+        final gx = (tr + 2 * mr + br) - (tl + 2 * ml + bl);
+        final gy = (bl + 2 * bc + br) - (tl + 2 * tc + tr);
+        final mag = sqrt((gx * gx + gy * gy).toDouble());
+
+        // Threshold متوازن: لا نريد التقاط كل تفاصيل النص.
+        if (mag > 52) out[y * w + x] = true;
       }
-      final bw=gray.getPixel(x,y).r.toInt()>sum~/cnt-C?255:0;
-      result.setPixelRgba(x,y,bw,bw,bw,255);
     }
-    return result;
+    return out;
   }
 
-  static img.Image apply(img.Image src,EnhanceMode mode){
-    switch(mode){case EnhanceMode.soft:return enhance(src);case EnhanceMode.bw:return blackWhite(src);case EnhanceMode.none:return src;}
+  static List<bool> _dilate(List<bool> src, int w, int h, int radius) {
+    final out = List<bool>.filled(src.length, false);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        bool hit = false;
+        for (int dy = -radius; dy <= radius && !hit; dy++) {
+          final ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          for (int dx = -radius; dx <= radius; dx++) {
+            final nx = x + dx;
+            if (nx < 0 || nx >= w) continue;
+            if (src[ny * w + nx]) {
+              hit = true;
+              break;
+            }
+          }
+        }
+        out[y * w + x] = hit;
+      }
+    }
+    return out;
+  }
+
+  static List<bool> _connectEdgesWithSize(List<bool> src, int w, int h) {
+    var a = _dilate(src, w, h, 2);
+    // تكرار صغير يساعد على ربط أضلاع الورقة، لكنه لا يحول الصورة كلها إلى حافة.
+    a = _dilate(a, w, h, 1);
+    return a;
+  }
+
+  static List<int>? _fallbackRect(List<bool> edges, int w, int h) {
+    int? top, bottom, left, right;
+
+    for (int y = 0; y < h; y++) {
+      int c = 0;
+      for (int x = 0; x < w; x++) {
+        if (edges[y * w + x]) c++;
+      }
+      if (c > w * 0.10) { top = y; break; }
+    }
+    for (int y = h - 1; y >= 0; y--) {
+      int c = 0;
+      for (int x = 0; x < w; x++) {
+        if (edges[y * w + x]) c++;
+      }
+      if (c > w * 0.10) { bottom = y; break; }
+    }
+    for (int x = 0; x < w; x++) {
+      int c = 0;
+      for (int y = 0; y < h; y++) {
+        if (edges[y * w + x]) c++;
+      }
+      if (c > h * 0.10) { left = x; break; }
+    }
+    for (int x = w - 1; x >= 0; x--) {
+      int c = 0;
+      for (int y = 0; y < h; y++) {
+        if (edges[y * w + x]) c++;
+      }
+      if (c > h * 0.10) { right = x; break; }
+    }
+
+    if (top == null || bottom == null || left == null || right == null) {
+      return null;
+    }
+    if (right - left < w * 0.12 || bottom - top < h * 0.08) return null;
+    return [left, top, right, bottom];
+  }
+
+  static double _quadArea(
+    double x1, double y1, double x2, double y2,
+    double x3, double y3, double x4, double y4,
+  ) {
+    return ((x1 * y2 + x2 * y3 + x3 * y4 + x4 * y1) -
+            (y1 * x2 + y2 * x3 + y3 * x4 + y4 * x1))
+        .abs() / 2.0;
   }
 }
 
-/// ═══════════════════════════════════════
-/// قص تلقائي
-/// ═══════════════════════════════════════
-class SmartCrop {
-  /// قص تلقائي — يرجع الصورة المقصوصة
-  static CropResult detect(img.Image src){
-    if(src.width<100||src.height<100)return CropResult(image:src,changed:false);
-    final rect=_detectRectOnImage(src);
-    if(rect==null)return CropResult(image:src,changed:false);
-    final pad=8.0,ox=(rect[0]-pad).clamp(0,src.width-1),oy=(rect[1]-pad).clamp(0,src.height-1);
-    final ow=(rect[2]-rect[0]+pad*2).clamp(20,src.width-ox).round(),oh=(rect[3]-rect[1]+pad*2).clamp(20,src.height-oy).round();
-    return CropResult(image:img.copyCrop(src,x:ox,y:oy,width:ow,height:oh),changed:true);
-  }
+/// بيانات مرشح واحد.
+class _Candidate {
+  final double sw, sh;
+  final double tlX, tlY, trX, trY, brX, brY, blX, blY;
+  final double score, areaRatio;
 
-  /// كشف الزوايا الأربع (كنسب 0-1) — لاستخدامها في أداة القص اليدوي
-  static List<double>? detectCorners(img.Image src){
-    if(src.width<100||src.height<100)return null;
-    final rect=_detectRectOnImage(src);
-    if(rect==null)return null;
-    final pad=6.0;
-    return[
-      ((rect[0]-pad)/src.width).clamp(0.0,1.0),((rect[1]-pad)/src.height).clamp(0.0,1.0),
-      ((rect[2]+pad)/src.width).clamp(0.0,1.0),((rect[1]-pad)/src.height).clamp(0.0,1.0),
-      ((rect[2]+pad)/src.width).clamp(0.0,1.0),((rect[3]+pad)/src.height).clamp(0.0,1.0),
-      ((rect[0]-pad)/src.width).clamp(0.0,1.0),((rect[3]+pad)/src.height).clamp(0.0,1.0),
-    ];
-  }
-
-  static List<int>? _detectRectOnImage(img.Image src){
-    const target=256;
-    final ratio=max(src.width,src.height)/target;
-    final sw=(src.width/ratio).round(),sh=(src.height/ratio).round();
-    var gray=img.grayscale(img.copyResize(src,width:sw,height:sh));
-    gray=img.gaussianBlur(gray,radius:3);
-    final rect=_detectRect(gray);
-    if(rect==null)return null;
-    return[
-      (rect[0]*ratio).round(),(rect[1]*ratio).round(),
-      (rect[2]*ratio).round(),(rect[3]*ratio).round(),
-    ];
-  }
-
-  static List<int>? _detectRect(img.Image gray){
-    final w=gray.width,h=gray.height;
-    var edges=img.Image(width:w,height:h);
-    for(int y=1;y<h-1;y++)for(int x=1;x<w-1;x++){
-      final tl=gray.getPixel(x-1,y-1).r.toInt(),tc=gray.getPixel(x,y-1).r.toInt(),tr=gray.getPixel(x+1,y-1).r.toInt();
-      final ml=gray.getPixel(x-1,y).r.toInt(),mr=gray.getPixel(x+1,y).r.toInt();
-      final bl=gray.getPixel(x-1,y+1).r.toInt(),bc=gray.getPixel(x,y+1).r.toInt(),br=gray.getPixel(x+1,y+1).r.toInt();
-      final mag=sqrt(((tr+2*mr+br)-(tl+2*ml+bl)).toDouble().pow(2)+((bl+2*bc+br)-(tl+2*tc+tr)).toDouble().pow(2)).toInt().clamp(0,255);
-      final v=mag>40?255:0;edges.setPixelRgba(x,y,v,v,v,255);
-    }
-    for(int p=0;p<3;p++){final d=img.Image(width:w,height:h);
-      for(int y=0;y<h;y++)for(int x=0;x<w;x++){int mx=0;for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++)mx=max(mx,edges.getPixel((x+dx).clamp(0,w-1),(y+dy).clamp(0,h-1)).r.toInt());d.setPixelRgba(x,y,mx,mx,mx,255);}
-      edges=d;
-    }
-    final th=64;int? t,b,l,r;
-    for(int y=0;y<h;y++){int ec=0;for(int x=0;x<w;x++)if(edges.getPixel(x,y).r.toInt()>th)ec++;if(ec>w*0.03){t=y;break;}}
-    for(int y=h-1;y>=0;y--){int ec=0;for(int x=0;x<w;x++)if(edges.getPixel(x,y).r.toInt()>th)ec++;if(ec>w*0.03){b=y;break;}}
-    for(int x=0;x<w;x++){int ec=0;for(int y=0;y<h;y++)if(edges.getPixel(x,y).r.toInt()>th)ec++;if(ec>h*0.03){l=x;break;}}
-    for(int x=w-1;x>=0;x--){int ec=0;for(int y=0;y<h;y++)if(edges.getPixel(x,y).r.toInt()>th)ec++;if(ec>h*0.03){r=x;break;}}
-    if(t==null||b==null||l==null||r==null||r-l<12||b-t<12)return null;
-    return[l,t,r,b];
-  }
+  const _Candidate({
+    required this.sw, required this.sh,
+    required this.tlX, required this.tlY,
+    required this.trX, required this.trY,
+    required this.brX, required this.brY,
+    required this.blX, required this.blY,
+    required this.score, required this.areaRatio,
+  });
 }
 
 /// ═══════════════════════════════════════
