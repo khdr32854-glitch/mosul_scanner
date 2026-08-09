@@ -2,8 +2,37 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
-/// أدوات المساعدة للصورة
+/// ===============================================================
+/// 1. Google ML Kit Scanner
+/// ===============================================================
+class GoogleScanner {
+  static Future<List<String>?> scan() async {
+    final scanner = DocumentScanner(
+      options: DocumentScannerOptions(
+        documentFormats: const {DocumentFormat.jpeg},
+        pageLimit: 10,
+        mode: ScannerMode.full,
+        isGalleryImport: true,
+      ),
+    );
+
+    try {
+      final result = await scanner.scanDocument();
+      return result.images;
+    } catch (e) {
+      debugPrint('Google Scanner Error: $e');
+      return null;
+    } finally {
+      await scanner.close();
+    }
+  }
+}
+
+/// ===============================================================
+/// 2. Image Utilities
+/// ===============================================================
 class ImageUtils {
   static img.Image? decodeBytes(Uint8List bytes) {
     try {
@@ -27,7 +56,9 @@ class ImageUtils {
   }
 }
 
-/// نتيجة القص
+/// ===============================================================
+/// 3. Crop Result Model
+/// ===============================================================
 class CropResult {
   final img.Image image;
   final bool changed;
@@ -40,7 +71,9 @@ class CropResult {
   });
 }
 
-/// تحسين الفلاتر (أصلي، أبيض وأسود، تحسين)
+/// ===============================================================
+/// 4. Image Enhancer
+/// ===============================================================
 enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
@@ -66,7 +99,9 @@ class ImageEnhancer {
   }
 }
 
-/// القص اليدوي وتصحيح المنظور
+/// ===============================================================
+/// 5. Manual Perspective Crop
+/// ===============================================================
 class ManualCrop {
   static img.Image cropPerspective(
     img.Image source,
@@ -92,7 +127,9 @@ class ManualCrop {
   }
 }
 
-/// القص الذكي الاحتياطي
+/// ===============================================================
+/// 6. Smart Crop Fallback
+/// ===============================================================
 class SmartCrop {
   static CropResult detect(img.Image source) {
     if (!ImageUtils.isValid(source)) {
