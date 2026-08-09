@@ -5,20 +5,31 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.8.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # اختيار الصور من الكاميرا أو المعرض
   image_picker: ^1.1.2
+
+  # معالجة الصور والقص والتدوير وتصحيح المنظور
   image: ^4.2.0
+
+  # إنشاء ملفات PDF
   pdf: ^3.10.8
+
+  # الطباعة ومشاركة PDF
   printing: ^5.13.1
+
+  # Google ML Kit Document Scanner - Android
   google_mlkit_document_scanner: ^0.5.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^4.0.0
 
 flutter:
