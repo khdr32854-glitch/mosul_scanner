@@ -12,19 +12,17 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 /// ===============================================================
-/// MOSUL SCANNER - PROFESSIONAL EDITION (GOOGLE ML ENGINE)
+/// MOSUL SCANNER - PROFESSIONAL EDITION (ACTIVE GOOGLE ENGINE)
 /// ===============================================================
 
 class GoogleScanner {
   static Future<List<String>?> scan({
     int pageLimit = 10,
-    bool allowGallery = true, // تفعيل المعرض المدمج مع ذكاء جوجل
+    bool allowGallery = true,
   }) async {
     final options = DocumentScannerOptions(
-      documentFormats: const {
-        DocumentFormat.jpeg,
-      },
-      mode: ScannerMode.full, // الوضع الكامل لتفعيل الذكاء الاصطناعي للقص والفلترة
+      documentFormats: const {DocumentFormat.jpeg},
+      mode: ScannerMode.full,
       pageLimit: pageLimit,
       isGalleryImport: allowGallery,
     );
@@ -67,7 +65,7 @@ class ImageUtils {
   }
 }
 
-enum EnhanceMode { none, soft, bw }
+enum EnhanceMode { none, magic, bw }
 
 class ImageEnhancer {
   static img.Image apply(img.Image source, EnhanceMode mode, double intensity) {
@@ -75,11 +73,12 @@ class ImageEnhancer {
     switch (mode) {
       case EnhanceMode.none:
         return image;
-      case EnhanceMode.soft:
+      case EnhanceMode.magic:
         try {
+          img.Image normalized = img.normalize(image, min: 0, max: 255);
           return img.adjustColor(
-            image,
-            contrast: 1.0 + (0.3 * intensity),
+            normalized,
+            contrast: 1.1 + (0.3 * intensity),
             brightness: 1.0 + (0.1 * intensity),
             saturation: 1.0 + (0.2 * intensity),
           );
@@ -89,9 +88,10 @@ class ImageEnhancer {
       case EnhanceMode.bw:
         try {
           final gray = img.grayscale(image);
+          img.Image normalized = img.normalize(gray, min: 0, max: 255);
           return img.adjustColor(
-            gray,
-            contrast: 1.0 + (0.5 * intensity),
+            normalized,
+            contrast: 1.2 + (0.4 * intensity),
             brightness: 1.0 + (0.1 * intensity),
           );
         } catch (_) {
@@ -104,18 +104,12 @@ class ImageEnhancer {
 class ManualCrop {
   static img.Image cropPerspective(
     img.Image source,
-    double x1,
-    double y1,
-    double x2,
-    double y2,
-    double x3,
-    double y3,
-    double x4,
-    double y4,
+    double x1, double y1,
+    double x2, double y2,
+    double x3, double y3,
+    double x4, double y4,
   ) {
-    if (!ImageUtils.isValid(source)) {
-      return img.Image.from(source);
-    }
+    if (!ImageUtils.isValid(source)) return img.Image.from(source);
 
     final w = source.width.toDouble();
     final h = source.height.toDouble();
@@ -128,15 +122,10 @@ class ManualCrop {
     final minNormalizedY = valuesY.reduce(math.min).clamp(0.0, 1.0);
     final maxNormalizedY = valuesY.reduce(math.max).clamp(0.0, 1.0);
 
-    int minX = (minNormalizedX * w).round();
-    int maxX = (maxNormalizedX * w).round();
-    int minY = (minNormalizedY * h).round();
-    int maxY = (maxNormalizedY * h).round();
-
-    minX = minX.clamp(0, source.width - 1);
-    minY = minY.clamp(0, source.height - 1);
-    maxX = maxX.clamp(minX + 1, source.width);
-    maxY = maxY.clamp(minY + 1, source.height);
+    int minX = (minNormalizedX * w).round().clamp(0, source.width - 1);
+    int minY = (minNormalizedY * h).round().clamp(0, source.height - 1);
+    int maxX = (maxNormalizedX * w).round().clamp(minX + 1, source.width);
+    int maxY = (maxNormalizedY * h).round().clamp(minY + 1, source.height);
 
     return img.copyCrop(
       source,
@@ -222,7 +211,6 @@ class DocumentItem {
     image = newImage;
     cachedBytes = Uint8List.fromList(img.encodeJpg(newImage, quality: 95));
     rotationAngle = 0;
-
     if (newImage.width > 0) {
       heightMm = (newImage.height / newImage.width) * widthMm;
     }
@@ -247,13 +235,10 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  /// فتح ماسح جوجل الذكي للتعرف والقص التلقائي (من الكاميرا أو المعرض الداخلي)
+  /// تفعيل ماسح جوجل الفعلي والنشط
   Future<void> _openGoogleScanner() async {
     if (_isScanning) return;
-
-    setState(() {
-      _isScanning = true;
-    });
+    setState(() => _isScanning = true);
 
     try {
       final List<String>? paths = await GoogleScanner.scan(
@@ -270,41 +255,30 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             final bytes = await file.readAsBytes();
             final decoded = img.decodeImage(bytes);
             if (decoded != null) {
-              // المستند قادم جاهزاً ومقصوصاً من جوجل، نضيفه للوحة مباشرة
               _addDecodedImage(decoded, isPhoto: false, curved: true);
             }
           }
         }
-        _showMessage('تم الاستخراج والمعالجة بنجاح');
+        _showMessage('تم استخدام ماسح جوجل بنجاح');
         return;
       }
     } catch (e) {
-      debugPrint('Scanner error: $e');
+      debugPrint('Google Scanner execution error: $e');
+      _showMessage('تعذر تشغيل ماسح جوجل، تأكد من دعم الجهاز', error: true);
     } finally {
-      if (mounted) {
-        setState(() {
-          _isScanning = false;
-        });
-      }
+      if (mounted) setState(() => _isScanning = false);
     }
   }
 
-  /// استيراد يدوي عادي للصور الشخصية أو المستندات بدون قص ذكي
   Future<void> _addManualImages(ImageSource source) async {
     try {
       if (source == ImageSource.camera) {
-        final XFile? photo = await _picker.pickImage(
-          source: ImageSource.camera,
-          imageQuality: 95,
-        );
+        final XFile? photo = await _picker.pickImage(source: ImageSource.camera, imageQuality: 95);
         if (photo == null) return;
         final bytes = await File(photo.path).readAsBytes();
         final decoded = img.decodeImage(bytes);
         if (decoded != null) {
-          _processImageWithCropScreen(
-            decoded,
-            isPhoto: _activeTabMode == 'photos',
-          );
+          _processImageWithCropScreen(decoded, isPhoto: _activeTabMode == 'photos');
         }
         return;
       }
@@ -314,22 +288,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final bytes = await File(file.path).readAsBytes();
         final decoded = img.decodeImage(bytes);
         if (decoded != null) {
-          _processImageWithCropScreen(
-            decoded,
-            isPhoto: _activeTabMode == 'photos',
-          );
+          _processImageWithCropScreen(decoded, isPhoto: _activeTabMode == 'photos');
         }
       }
     } catch (e) {
-      if (!mounted) return;
-      _showMessage('خطأ في جلب الصور: $e', error: true);
+      if (mounted) _showMessage('خطأ في جلب الصور: $e', error: true);
     }
   }
 
-  Future<void> _processImageWithCropScreen(
-    img.Image decoded, {
-    bool isPhoto = false,
-  }) async {
+  Future<void> _processImageWithCropScreen(img.Image decoded, {bool isPhoto = false}) async {
     if (!mounted) return;
 
     if (isPhoto) {
@@ -339,9 +306,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
     final result = await Navigator.push<img.Image>(
       context,
-      MaterialPageRoute(
-        builder: (_) => CropScreen(image: decoded),
-      ),
+      MaterialPageRoute(builder: (_) => CropScreen(image: decoded)),
     );
 
     if (result != null && mounted) {
@@ -349,25 +314,17 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     }
   }
 
-  void _addDecodedImage(
-    img.Image decodedImage, {
-    bool isPhoto = false,
-    bool curved = false,
-  }) {
+  void _addDecodedImage(img.Image decodedImage, {bool isPhoto = false, bool curved = false}) {
     if (!ImageUtils.isValid(decodedImage)) {
       _showMessage('الصورة غير صالحة', error: true);
       return;
     }
-
-    final encodedBytes = Uint8List.fromList(
-      img.encodeJpg(decodedImage, quality: 95),
-    );
-
+    final encodedBytes = Uint8List.fromList(img.encodeJpg(decodedImage, quality: 95));
     if (!mounted) return;
 
     setState(() {
       final photoMode = isPhoto || _activeTabMode == 'photos';
-      final width = photoMode ? 36.0 : 85.0; // القياس القياسي للموحدة
+      final width = photoMode ? 36.0 : 85.0;
       final ratio = decodedImage.height / decodedImage.width;
       final height = photoMode ? 45.0 : width * ratio;
       final offset = _items.length * 4.0;
@@ -389,12 +346,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     });
   }
 
-  void _resizeActiveItem(
-    double width,
-    double height, {
-    bool isPhoto = false,
-    bool curved = false,
-  }) {
+  void _resizeActiveItem(double width, double height, {bool isPhoto = false, bool curved = false}) {
     if (_activeItem == null) return;
     setState(() {
       _activeItem!.widthMm = width;
@@ -461,9 +413,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
     final result = await Navigator.push<img.Image>(
       context,
-      MaterialPageRoute(
-        builder: (_) => CropScreen(image: active.rotatedImage),
-      ),
+      MaterialPageRoute(builder: (_) => CropScreen(image: active.rotatedImage)),
     );
 
     if (result != null && mounted) {
@@ -474,11 +424,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   }
 
   void _deleteActiveItem() {
-    final active = _activeItem;
-    if (active == null) return;
-
+    if (_activeItem == null) return;
     setState(() {
-      _items.remove(active);
+      _items.remove(_activeItem);
       _activeItem = _items.isEmpty ? null : _items.last;
     });
   }
@@ -499,9 +447,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             return pw.Stack(
               children: _items.map((item) {
                 final rotated = item.rotatedImage;
-                final bytes = Uint8List.fromList(
-                  img.encodeJpg(rotated, quality: 95),
-                );
+                final bytes = Uint8List.fromList(img.encodeJpg(rotated, quality: 95));
 
                 return pw.Positioned(
                   left: item.xMm * PdfPageFormat.mm,
@@ -512,10 +458,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     child: pw.SizedBox(
                       width: item.widthMm * PdfPageFormat.mm,
                       height: item.heightMm * PdfPageFormat.mm,
-                      child: pw.Image(
-                        pw.MemoryImage(bytes),
-                        fit: pw.BoxFit.fill,
-                      ),
+                      child: pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.fill),
                     ),
                   ),
                 );
@@ -527,9 +470,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
       await Printing.layoutPdf(onLayout: (format) async => pdf.save());
     } catch (e) {
-      if (mounted) {
-        _showMessage('خطأ أثناء تجهيز الطباعة: $e', error: true);
-      }
+      if (mounted) _showMessage('خطأ أثناء تجهيز الطباعة: $e', error: true);
     }
   }
 
@@ -564,21 +505,17 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip: 'استخراج ذكي (كاميرا ومكتبة)', // الزر الأساسي للاعتماد على جوجل
+            tooltip: 'ماسح جوجل الذكي الفعلي',
             icon: _isScanning
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
+                    width: 18, height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
                 : const Icon(Icons.document_scanner),
             onPressed: _isScanning ? null : _openGoogleScanner,
           ),
           IconButton(
-            tooltip: 'إدراج صورة عادية',
+            tooltip: 'استيراد من المعرض',
             icon: const Icon(Icons.photo_library_outlined),
             onPressed: () => _addManualImages(ImageSource.gallery),
           ),
@@ -593,43 +530,13 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               children: [
-                _buildToolBtn(
-                  'المستمسكات',
-                  Icons.badge_outlined,
-                  _activeTabMode == 'docs',
-                  () => setState(() => _activeTabMode = 'docs'),
-                ),
-                _buildToolBtn(
-                  'الصور الشخصية',
-                  Icons.person_outline,
-                  _activeTabMode == 'photos',
-                  () => setState(() => _activeTabMode = 'photos'),
-                ),
+                _buildToolBtn('المستمسكات', Icons.badge_outlined, _activeTabMode == 'docs', () => setState(() => _activeTabMode = 'docs')),
+                _buildToolBtn('الصور الشخصية', Icons.person_outline, _activeTabMode == 'photos', () => setState(() => _activeTabMode = 'photos')),
                 const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
-                _buildActionBtn(
-                  'تعديل دقيق للقص',
-                  Icons.crop,
-                  _manualCropActiveItem,
-                  const Color(0xFF0EA5E9),
-                ),
-                _buildActionBtn(
-                  'تنسيق تلقائي',
-                  Icons.grid_view,
-                  _autoAlignItems,
-                  const Color(0xFF10B981),
-                ),
-                _buildActionBtn(
-                  'تدوير',
-                  Icons.rotate_right,
-                  _rotateActiveItem,
-                  const Color(0xFF64748B),
-                ),
-                _buildActionBtn(
-                  'نسخ',
-                  Icons.copy_all,
-                  _duplicateActiveItem,
-                  const Color(0xFF8B5CF6),
-                ),
+                _buildActionBtn('قص وتوضيح سحري', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
+                _buildActionBtn('تنسيق تلقائي', Icons.grid_view, _autoAlignItems, const Color(0xFF10B981)),
+                _buildActionBtn('تدوير', Icons.rotate_right, _rotateActiveItem, const Color(0xFF64748B)),
+                _buildActionBtn('نسخ', Icons.copy_all, _duplicateActiveItem, const Color(0xFF8B5CF6)),
               ],
             ),
           ),
@@ -645,61 +552,20 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         width: double.infinity,
                         color: const Color(0xFF0F172A),
-                        child: const Text(
-                          'المقاسات القياسية',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        child: const Text('المقاسات القياسية', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                       Expanded(
                         child: ListView(
                           padding: const EdgeInsets.all(6),
                           children: _activeTabMode == 'docs'
                               ? [
-                                  _buildSizeBtn(
-                                    'بطاقة موحدة',
-                                    '8.5 × 5.4 سم',
-                                    () => _resizeActiveItem(85, 54, curved: true),
-                                  ),
-                                  _buildSizeBtn(
-                                    'بطاقة سكن',
-                                    '8.8 × 5.8 سم',
-                                    () => _resizeActiveItem(88, 58, curved: true),
-                                  ),
-                                  _buildSizeBtn(
-                                    'ورقة A4',
-                                    '21 × 29.7 سم',
-                                    () => _resizeActiveItem(
-                                      210,
-                                      297,
-                                      curved: false,
-                                    ),
-                                    clr: const Color(0xFF0D9488),
-                                  ),
+                                  _buildSizeBtn('بطاقة موحدة', '8.5 × 5.4 سم', () => _resizeActiveItem(85, 54, curved: true)),
+                                  _buildSizeBtn('بطاقة سكن', '8.8 × 5.8 سم', () => _resizeActiveItem(88, 58, curved: true)),
+                                  _buildSizeBtn('ورقة A4', '21 × 29.7 سم', () => _resizeActiveItem(210, 297, curved: false), clr: const Color(0xFF0D9488)),
                                 ]
                               : [
-                                  _buildSizeBtn(
-                                    'صورة معاملة',
-                                    '3.6 × 4.5 سم',
-                                    () => _resizeActiveItem(
-                                      36,
-                                      45,
-                                      isPhoto: true,
-                                    ),
-                                  ),
-                                  _buildSizeBtn(
-                                    'صورة مصغرة',
-                                    '2.5 × 3.4 سم',
-                                    () => _resizeActiveItem(
-                                      25,
-                                      34,
-                                      isPhoto: true,
-                                    ),
-                                  ),
+                                  _buildSizeBtn('صورة معاملة', '3.6 × 4.5 سم', () => _resizeActiveItem(36, 45, isPhoto: true)),
+                                  _buildSizeBtn('صورة مصغرة', '2.5 × 3.4 سم', () => _resizeActiveItem(25, 34, isPhoto: true)),
                                 ],
                         ),
                       ),
@@ -714,19 +580,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                 foregroundColor: Colors.white,
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(vertical: 8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                               ),
                               onPressed: _deleteActiveItem,
                               icon: const Icon(Icons.delete_sweep_outlined, size: 16),
-                              label: const Text(
-                                'حذف العنصر',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              label: const Text('حذف العنصر', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ),
@@ -739,10 +597,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     child: Center(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final scaleX =
-                              (constraints.maxWidth - 30) / pageWidthMm;
-                          final scaleY =
-                              (constraints.maxHeight - 30) / pageHeightMm;
+                          final scaleX = (constraints.maxWidth - 30) / pageWidthMm;
+                          final scaleY = (constraints.maxHeight - 30) / pageHeightMm;
                           final scale = math.min(scaleX, scaleY);
 
                           return Container(
@@ -750,20 +606,12 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             height: pageHeightMm * scale,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.6),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
+                              boxShadow: [BoxShadow(color: Colors.black.withAlpha(153), blurRadius: 16, offset: const Offset(0, 4))],
                             ),
                             child: Stack(
                               children: _items.map((item) {
                                 final active = _activeItem?.id == item.id;
-                                final radius = item.hasCurvedCorners
-                                    ? BorderRadius.circular(3.5 * scale)
-                                    : BorderRadius.zero;
+                                final radius = item.hasCurvedCorners ? BorderRadius.circular(3.5 * scale) : BorderRadius.zero;
 
                                 return Positioned(
                                   left: item.xMm * scale,
@@ -771,11 +619,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                   width: item.widthMm * scale,
                                   height: item.heightMm * scale,
                                   child: GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _activeItem = item;
-                                      });
-                                    },
+                                    onTap: () => setState(() => _activeItem = item),
                                     onPanUpdate: (details) {
                                       setState(() {
                                         item.xMm += details.delta.dx / scale;
@@ -786,18 +630,13 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                       decoration: BoxDecoration(
                                         borderRadius: radius,
                                         border: Border.all(
-                                          color: active
-                                              ? const Color(0xFF0284C7)
-                                              : Colors.transparent,
+                                          color: active ? const Color(0xFF0284C7) : Colors.transparent,
                                           width: active ? 2.0 : 1,
                                         ),
                                       ),
                                       child: ClipRRect(
                                         borderRadius: radius,
-                                        child: Image.memory(
-                                          item.cachedBytes,
-                                          fit: BoxFit.fill,
-                                        ),
+                                        child: Image.memory(item.cachedBytes, fit: BoxFit.fill),
                                       ),
                                     ),
                                   ),
@@ -818,12 +657,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     );
   }
 
-  Widget _buildToolBtn(
-    String label,
-    IconData icon,
-    bool selected,
-    VoidCallback onTap,
-  ) {
+  Widget _buildToolBtn(String label, IconData icon, bool selected, VoidCallback onTap) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
@@ -832,24 +666,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFF0284C7).withOpacity(0.2) : Colors.transparent,
+            color: selected ? const Color(0xFF0284C7).withAlpha(51) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: selected ? const Color(0xFF0284C7) : Colors.white24,
-            ),
+            border: Border.all(color: selected ? const Color(0xFF0284C7) : Colors.white24),
           ),
           child: Row(
             children: [
               Icon(icon, size: 14, color: selected ? const Color(0xFF38BDF8) : Colors.white70),
               const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: selected ? const Color(0xFF38BDF8) : Colors.white70,
-                ),
-              ),
+              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: selected ? const Color(0xFF38BDF8) : Colors.white70)),
             ],
           ),
         ),
@@ -857,12 +682,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     );
   }
 
-  Widget _buildActionBtn(
-    String label,
-    IconData icon,
-    VoidCallback onTap,
-    Color color,
-  ) {
+  Widget _buildActionBtn(String label, IconData icon, VoidCallback onTap, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
@@ -871,22 +691,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
+            color: color.withAlpha(38),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: color.withOpacity(0.4)),
+            border: Border.all(color: color.withAlpha(102)),
           ),
           child: Row(
             children: [
               Icon(icon, size: 14, color: color),
               const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
+              Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
             ],
           ),
         ),
@@ -894,41 +707,24 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     );
   }
 
-  Widget _buildSizeBtn(
-    String title,
-    String subtitle,
-    VoidCallback onTap, {
-    Color clr = const Color(0xFF0284C7),
-  }) {
+  Widget _buildSizeBtn(String title, String subtitle, VoidCallback onTap, {Color clr = const Color(0xFF0284C7)}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          backgroundColor: clr.withOpacity(0.12),
+          backgroundColor: clr.withAlpha(30),
           foregroundColor: clr,
-          side: BorderSide(color: clr.withOpacity(0.3)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(6),
-          ),
+          side: BorderSide(color: clr.withAlpha(76)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
           elevation: 0,
         ),
         onPressed: onTap,
         child: Column(
           children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: clr,
-              ),
-            ),
+            Text(title, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: clr)),
             const SizedBox(height: 2),
-            Text(
-              subtitle,
-              style: TextStyle(fontSize: 8, color: clr.withOpacity(0.8)),
-            ),
+            Text(subtitle, style: TextStyle(fontSize: 8, color: clr.withAlpha(204))),
           ],
         ),
       ),
@@ -936,6 +732,38 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   }
 }
 
+/// ===============================================================
+/// CUSTOM CROP PAINTER
+/// ===============================================================
+class CropBoxPainter extends CustomPainter {
+  final Offset p1, p2, p3, p4;
+  CropBoxPainter(this.p1, this.p2, this.p3, this.p4);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF0284C7).withAlpha(220)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round;
+      
+    final path = Path()
+      ..moveTo(p1.dx, p1.dy)
+      ..lineTo(p2.dx, p2.dy)
+      ..lineTo(p3.dx, p3.dy)
+      ..lineTo(p4.dx, p4.dy)
+      ..close();
+      
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+/// ===============================================================
+/// CROP SCREEN
+/// ===============================================================
 class CropScreen extends StatefulWidget {
   final img.Image image;
   const CropScreen({super.key, required this.image});
@@ -951,7 +779,7 @@ class _CropScreenState extends State<CropScreen> {
   double _x4 = 0.05, _y4 = 0.95;
   
   EnhanceMode _filter = EnhanceMode.none;
-  double _filterIntensity = 0.5;
+  double _filterIntensity = 0.8;
   
   late Uint8List _displayBytes;
 
@@ -963,31 +791,22 @@ class _CropScreenState extends State<CropScreen> {
 
   void _updateDisplayBytes() {
     final processed = ImageEnhancer.apply(widget.image, _filter, _filterIntensity);
-    _displayBytes = Uint8List.fromList(
-      img.encodeJpg(processed, quality: 92),
-    );
+    _displayBytes = Uint8List.fromList(img.encodeJpg(processed, quality: 92));
   }
   
   void _autoCrop() {
     setState(() {
-      _x1 = 0.02; _y1 = 0.02;
-      _x2 = 0.98; _y2 = 0.02;
-      _x3 = 0.98; _y3 = 0.98;
-      _x4 = 0.02; _y4 = 0.98;
+      _x1 = 0.05; _y1 = 0.05;
+      _x2 = 0.95; _y2 = 0.05;
+      _x3 = 0.95; _y3 = 0.95;
+      _x4 = 0.05; _y4 = 0.95;
     });
   }
 
   void _applyCrop() {
     var cropped = ManualCrop.cropPerspective(
       widget.image,
-      _x1,
-      _y1,
-      _x2,
-      _y2,
-      _x3,
-      _y3,
-      _x4,
-      _y4,
+      _x1, _y1, _x2, _y2, _x3, _y3, _x4, _y4,
     );
     cropped = ImageEnhancer.apply(cropped, _filter, _filterIntensity);
     Navigator.pop(context, cropped);
@@ -999,48 +818,28 @@ class _CropScreenState extends State<CropScreen> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: const Color(0xFF1E293B),
-        leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
         title: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
               _filterChip('أصلي', _filter == EnhanceMode.none, () {
-                setState(() {
-                  _filter = EnhanceMode.none;
-                  _updateDisplayBytes();
-                });
+                setState(() { _filter = EnhanceMode.none; _updateDisplayBytes(); });
               }),
               const SizedBox(width: 4),
-              _filterChip('تحسين ذكي', _filter == EnhanceMode.soft, () {
-                setState(() {
-                  _filter = EnhanceMode.soft;
-                  _updateDisplayBytes();
-                });
+              _filterChip('تحسين سحري ✨', _filter == EnhanceMode.magic, () {
+                setState(() { _filter = EnhanceMode.magic; _updateDisplayBytes(); });
               }),
               const SizedBox(width: 4),
               _filterChip('أبيض وأسود رسمي', _filter == EnhanceMode.bw, () {
-                setState(() {
-                  _filter = EnhanceMode.bw;
-                  _updateDisplayBytes();
-                });
+                setState(() { _filter = EnhanceMode.bw; _updateDisplayBytes(); });
               }),
             ],
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'تحديد تقريبي',
-            icon: const Icon(Icons.auto_awesome_mosaic, color: Colors.amber),
-            onPressed: _autoCrop,
-          ),
-          IconButton(
-            tooltip: 'تم والتصدير',
-            icon: const Icon(Icons.check, color: Colors.greenAccent),
-            onPressed: _applyCrop,
-          ),
+          IconButton(tooltip: 'تحديد تقريبي', icon: const Icon(Icons.auto_awesome_mosaic, color: Colors.amber), onPressed: _autoCrop),
+          IconButton(tooltip: 'تم والتصدير', icon: const Icon(Icons.check, color: Colors.greenAccent), onPressed: _applyCrop),
         ],
       ),
       body: Column(
@@ -1058,39 +857,26 @@ class _CropScreenState extends State<CropScreen> {
                 final imgL = (cw - imgW) / 2;
                 final imgT = (ch - imgH) / 2;
 
+                final p1 = Offset(imgL + _x1 * imgW, imgT + _y1 * imgH);
+                final p2 = Offset(imgL + _x2 * imgW, imgT + _y2 * imgH);
+                final p3 = Offset(imgL + _x3 * imgW, imgT + _y3 * imgH);
+                final p4 = Offset(imgL + _x4 * imgW, imgT + _y4 * imgH);
+
                 return Stack(
                   children: [
                     Positioned(
-                      left: imgL,
-                      top: imgT,
-                      width: imgW,
-                      height: imgH,
+                      left: imgL, top: imgT, width: imgW, height: imgH,
                       child: Image.memory(_displayBytes, fit: BoxFit.fill),
                     ),
-                    _buildCornerDot(_x1, _y1, imgL, imgT, imgW, imgH, (nx, ny) {
-                      setState(() {
-                        _x1 = nx;
-                        _y1 = ny;
-                      });
-                    }),
-                    _buildCornerDot(_x2, _y2, imgL, imgT, imgW, imgH, (nx, ny) {
-                      setState(() {
-                        _x2 = nx;
-                        _y2 = ny;
-                      });
-                    }),
-                    _buildCornerDot(_x3, _y3, imgL, imgT, imgW, imgH, (nx, ny) {
-                      setState(() {
-                        _x3 = nx;
-                        _y3 = ny;
-                      });
-                    }),
-                    _buildCornerDot(_x4, _y4, imgL, imgT, imgW, imgH, (nx, ny) {
-                      setState(() {
-                        _x4 = nx;
-                        _y4 = ny;
-                      });
-                    }),
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: CropBoxPainter(p1, p2, p3, p4),
+                      ),
+                    ),
+                    _buildCornerDot(_x1, _y1, imgL, imgT, imgW, imgH, (nx, ny) => setState(() { _x1 = nx; _y1 = ny; })),
+                    _buildCornerDot(_x2, _y2, imgL, imgT, imgW, imgH, (nx, ny) => setState(() { _x2 = nx; _y2 = ny; })),
+                    _buildCornerDot(_x3, _y3, imgL, imgT, imgW, imgH, (nx, ny) => setState(() { _x3 = nx; _y3 = ny; })),
+                    _buildCornerDot(_x4, _y4, imgL, imgT, imgW, imgH, (nx, ny) => setState(() { _x4 = nx; _y4 = ny; })),
                   ],
                 );
               },
@@ -1107,22 +893,15 @@ class _CropScreenState extends State<CropScreen> {
                   Expanded(
                     child: Slider(
                       value: _filterIntensity,
-                      min: 0.0,
-                      max: 2.0,
+                      min: 0.0, max: 2.0,
                       activeColor: const Color(0xFF38BDF8),
                       inactiveColor: Colors.white24,
                       onChanged: (val) {
-                        setState(() {
-                          _filterIntensity = val;
-                          _updateDisplayBytes();
-                        });
+                        setState(() { _filterIntensity = val; _updateDisplayBytes(); });
                       },
                     ),
                   ),
-                  Text(
-                    '${(_filterIntensity * 50).toInt()}%',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  )
+                  Text('${(_filterIntensity * 50).toInt()}%', style: const TextStyle(color: Colors.white, fontSize: 12))
                 ],
               ),
             ),
@@ -1131,15 +910,7 @@ class _CropScreenState extends State<CropScreen> {
     );
   }
 
-  Widget _buildCornerDot(
-    double rx,
-    double ry,
-    double il,
-    double it,
-    double iw,
-    double ih,
-    void Function(double, double) onMove,
-  ) {
+  Widget _buildCornerDot(double rx, double ry, double il, double it, double iw, double ih, void Function(double, double) onMove) {
     return Positioned(
       left: il + rx * iw - 18,
       top: it + ry * ih - 18,
@@ -1147,26 +918,17 @@ class _CropScreenState extends State<CropScreen> {
         onPanUpdate: (details) {
           final currentX = il + rx * iw;
           final currentY = it + ry * ih;
-          final newX = ((currentX + details.delta.dx - il) / iw).clamp(
-            0.0,
-            1.0,
-          );
-          final newY = ((currentY + details.delta.dy - it) / ih).clamp(
-            0.0,
-            1.0,
-          );
+          final newX = ((currentX + details.delta.dx - il) / iw).clamp(0.0, 1.0);
+          final newY = ((currentY + details.delta.dy - it) / ih).clamp(0.0, 1.0);
           onMove(newX, newY);
         },
         child: Container(
-          width: 36,
-          height: 36,
+          width: 36, height: 36,
           decoration: BoxDecoration(
-            color: const Color(0xFF0284C7).withOpacity(0.9),
+            color: const Color(0xFF0284C7).withAlpha(230),
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 2),
-            boxShadow: const [
-              BoxShadow(color: Colors.black45, blurRadius: 4),
-            ],
+            boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)],
           ),
           child: const Icon(Icons.control_camera, size: 16, color: Colors.white),
         ),
@@ -1185,11 +947,7 @@ class _CropScreenState extends State<CropScreen> {
         ),
         child: Text(
           label,
-          style: TextStyle(
-            color: selected ? Colors.white : Colors.white70,
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: selected ? Colors.white : Colors.white70, fontSize: 10, fontWeight: FontWeight.bold),
         ),
       ),
     );
