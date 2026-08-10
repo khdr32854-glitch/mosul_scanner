@@ -13,28 +13,117 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. تنزيل المشروع
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2. Java 17
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
 
+      # 3. Flutter Stable
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Force Clean & Get Dependencies
+      # 4. إنشاء مشروع Android حديث V2
+      - name: Create Android Project
+        run: |
+          rm -rf android
+
+          flutter create \
+            --platforms=android \
+            --org=com.mosul \
+            --project-name=mosul_scanner \
+            --overwrite \
+            .
+
+      # 5. إضافة صلاحية الكاميرا
+      - name: Configure Camera Permission
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          text = manifest.read_text()
+
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.CAMERA"/>'
+          )
+
+          if permission not in text:
+              text = text.replace(
+                  '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+                  '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.CAMERA"/>'''
+              )
+
+          manifest.write_text(text)
+          PY
+
+      # 6. التأكد أن Android أصبح موجودًا
+      - name: Verify Android Project
+        run: |
+          echo "Checking Android project..."
+
+          test -f android/app/src/main/AndroidManifest.xml
+          test -f android/app/src/main/kotlin/com/mosul/mosul_scanner/MainActivity.kt
+
+          echo "Android project created successfully."
+
+      # 7. تنظيف المشروع
+      - name: Clean Flutter
+        run: |
+          flutter clean
+          rm -rf .dart_tool
+          rm -rf build
+
+      # 8. تحميل المكتبات
+      - name: Get Dependencies
         run: |
           flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+      # 9. معلومات Flutter
+      - name: Flutter Doctor
+        run: |
+          flutter --version
+          flutter doctor -v
 
+      # 10. فحص المكتبات
+      - name: Check Dependencies
+        run: |
+          flutter pub deps
+
+      # 11. تحليل المشروع
+      - name: Analyze
+        run: |
+          flutter analyze
+
+      # 12. بناء APK
+      - name: Build APK
+        run: |
+          flutter build apk \
+            --release \
+            --no-tree-shake-icons
+
+      # 13. التأكد من وجود APK
+      - name: Verify APK
+        run: |
+          ls -lh build/app/outputs/flutter-apk/
+          test -f build/app/outputs/flutter-apk/app-release.apk
+
+      # 14. رفع APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
