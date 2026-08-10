@@ -1,40 +1,144 @@
 name: Build APK
 
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Mosul Scanner APK
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
 
+      # ============================================================
+      # 1. تحميل المشروع
+      # ============================================================
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # ============================================================
+      # 2. Java 17
+      # ============================================================
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: zulu
           java-version: '17'
 
+
+      # ============================================================
+      # 3. Flutter
+      # ============================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
+          cache: true
 
-      - name: Create Android Structure & Fix Permissions
+
+      # ============================================================
+      # 4. التأكد من وجود مشروع Android الحالي
+      #
+      # مهم جداً:
+      # لا نستخدم flutter create .
+      #
+      # حتى لا يتم إعادة إنشاء ملفات Android و C++ الموجودة
+      # في مشروع Mosul Scanner.
+      # ============================================================
+      - name: Verify Android Project
+        shell: bash
         run: |
-          flutter create . --platforms=android --org com.example
-          
-          # حقن أذونات الكاميرا والتخزين تلقائياً داخل AndroidManifest.xml بعد إنشائه
-          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST_PATH" ]; then
-            sed -i '/<application/i \    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>' "$MANIFEST_PATH"
-            echo "Successfully injected permissions into AndroidManifest.xml"
-          else
-            echo "AndroidManifest.xml not found!"
+
+          echo "Checking Android project..."
+
+          if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
+            echo "ERROR: AndroidManifest.xml not found!"
+            exit 1
           fi
 
+          if [ -f "android/app/src/main/cpp/CMakeLists.txt" ]; then
+            echo "C++ / CMake project found."
+          else
+            echo "WARNING: CMakeLists.txt not found."
+          fi
+
+          echo "Android project is ready."
+
+
+      # ============================================================
+      # 5. تحميل مكتبات Flutter
+      # ============================================================
       - name: Get Dependencies
         run: flutter pub get
+
+
+      # ============================================================
+      # 6. تنظيف المشروع
+      # ============================================================
+      - name: Flutter Clean
+        run: flutter clean
+
+
+      # ============================================================
+      # 7. تحميل المكتبات بعد التنظيف
+      # ============================================================
+      - name: Get Dependencies Again
+        run: flutter pub get
+
+
+      # ============================================================
+      # 8. بناء APK Release
+      # ============================================================
+      - name: Build APK Release
+        run: |
+          flutter build apk \
+            --release \
+            --no-tree-shake-icons
+
+
+      # ============================================================
+      # 9. التأكد من إنشاء APK
+      # ============================================================
+      - name: Verify APK
+        shell: bash
+        run: |
+
+          echo "========================================"
+          echo "Searching for APK..."
+          echo "========================================"
+
+          find build/app/outputs/flutter-apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: app-release.apk was not generated!"
+            exit 1
+          fi
+
+          echo ""
+          echo "APK successfully generated:"
+          ls -lh "$APK_PATH"
+
+
+      # ============================================================
+      # 10. رفع APK إلى GitHub Artifacts
+      # ============================================================
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mosul-Scanner-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7        run: flutter pub get
 
       - name: Build APK Release
         run: flutter build apk --release --no-tree-shake-icons
