@@ -12,7 +12,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 /// ===============================================================
-/// MOSUL SCANNER - CROP ENGINE
+/// MOSUL SCANNER - PROFESSIONAL EDITION
 /// ===============================================================
 
 class GoogleScanner {
@@ -29,26 +29,17 @@ class GoogleScanner {
       isGalleryImport: allowGallery,
     );
 
-    final scanner = DocumentScanner(
-      options: options,
-    );
+    final scanner = DocumentScanner(options: options);
 
     try {
-      debugPrint('MOSUL SCANNER: Opening Google Document Scanner');
-
       final result = await scanner.scanDocument();
-      final images = result.images;
-
-      return images;
-    } catch (e, stackTrace) {
-      debugPrint('GOOGLE DOCUMENT SCANNER ERROR: $e\n$stackTrace');
+      return result.images;
+    } catch (e) {
       return null;
     } finally {
       try {
         await scanner.close();
-      } catch (e) {
-        debugPrint('Google Scanner close error: $e');
-      }
+      } catch (_) {}
     }
   }
 }
@@ -75,18 +66,6 @@ class ImageUtils {
   }
 }
 
-class CropResult {
-  final img.Image image;
-  final bool changed;
-  final double confidence;
-
-  const CropResult({
-    required this.image,
-    required this.changed,
-    required this.confidence,
-  });
-}
-
 enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
@@ -103,14 +82,14 @@ class ImageEnhancer {
             brightness: 1.04,
             saturation: 1.03,
           );
-        } catch (e) {
+        } catch (_) {
           return image;
         }
       case EnhanceMode.bw:
         try {
           final gray = img.grayscale(image);
           return img.adjustColor(gray, contrast: 1.22, brightness: 1.03);
-        } catch (e) {
+        } catch (_) {
           return image;
         }
     }
@@ -175,11 +154,11 @@ class MosulScannerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Mosul Scanner',
+      title: 'Mosul Scanner Pro',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.blue,
+        colorSchemeSeed: Colors.blueGrey,
       ),
       home: const MainScannerScreen(),
     );
@@ -276,41 +255,28 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         allowGallery: false,
       );
 
-      if (!mounted) return;
-
-      // تعديل هنا: في حال فشل أو تم تخطي ماسح جوجل، لا نعرض خطأ مزعج بل نتحول بسلاسة لاختيار المعرض أو الكاميرا العادية
-      if (paths == null || paths.isEmpty) {
-        _addNewImages(ImageSource.gallery);
-        return;
-      }
-
-      int added = 0;
-      for (final path in paths) {
-        final file = File(path);
-        if (await file.exists()) {
-          final bytes = await file.readAsBytes();
-          final decoded = img.decodeImage(bytes);
-          if (decoded != null) {
-            _addDecodedImage(decoded, isPhoto: false, curved: true);
-            added++;
+      if (paths != null && paths.isNotEmpty) {
+        for (final path in paths) {
+          final file = File(path);
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            final decoded = img.decodeImage(bytes);
+            if (decoded != null) {
+              await _processImageWithCropScreen(decoded, isPhoto: false);
+            }
           }
         }
+        return;
       }
-
-      if (added > 0 && mounted) {
-        _showMessage('تم مسح $added مستند بنجاح');
-      }
-    } catch (e) {
-      if (mounted) {
-        _addNewImages(ImageSource.gallery);
-      }
-    } finally {
+    } catch (_) {} finally {
       if (mounted) {
         setState(() {
           _isScanning = false;
         });
       }
     }
+
+    await _addNewImages(ImageSource.gallery);
   }
 
   Future<void> _addNewImages(ImageSource source) async {
@@ -327,14 +293,26 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         );
         if (photo == null) return;
         final bytes = await File(photo.path).readAsBytes();
-        _processAndAddImage(bytes, isPhoto: true);
+        final decoded = img.decodeImage(bytes);
+        if (decoded != null) {
+          await _processImageWithCropScreen(
+            decoded,
+            isPhoto: _activeTabMode == 'photos',
+          );
+        }
         return;
       }
 
       final List<XFile> files = await _picker.pickMultiImage(imageQuality: 95);
       for (final file in files) {
         final bytes = await File(file.path).readAsBytes();
-        _processAndAddImage(bytes, isPhoto: _activeTabMode == 'photos');
+        final decoded = img.decodeImage(bytes);
+        if (decoded != null) {
+          await _processImageWithCropScreen(
+            decoded,
+            isPhoto: _activeTabMode == 'photos',
+          );
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -342,13 +320,27 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     }
   }
 
-  void _processAndAddImage(Uint8List bytes, {bool isPhoto = false}) {
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) {
-      _showMessage('تعذر قراءة الصورة', error: true);
+  Future<void> _processImageWithCropScreen(
+    img.Image decoded, {
+    bool isPhoto = false,
+  }) async {
+    if (!mounted) return;
+
+    if (isPhoto) {
+      _addDecodedImage(decoded, isPhoto: true, curved: false);
       return;
     }
-    _addDecodedImage(decoded, isPhoto: isPhoto, curved: !isPhoto);
+
+    final result = await Navigator.push<img.Image>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CropScreen(image: decoded),
+      ),
+    );
+
+    if (result != null && mounted) {
+      _addDecodedImage(result, isPhoto: false, curved: true);
+    }
   }
 
   void _addDecodedImage(
@@ -487,7 +479,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
   Future<void> _exportAndPrint() async {
     if (_items.isEmpty) {
-      _showMessage('لا توجد صور للطباعة', error: true);
+      _showMessage('لا توجد مستندات للطباعة', error: true);
       return;
     }
 
@@ -542,7 +534,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(message, textDirection: TextDirection.rtl),
-          backgroundColor: error ? Colors.red : null,
+          backgroundColor: error ? Colors.red.shade800 : null,
         ),
       );
   }
@@ -553,83 +545,87 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         title: const Text(
-          'مكتب علاء الحديدي - الماسح والطباعة',
+          'مكتب علاء الحديدي - نظام الطباعة الاحترافي',
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
         ),
-        backgroundColor: const Color(0xFF0284C7),
+        backgroundColor: const Color(0xFF1E293B),
         foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
           IconButton(
-            tooltip: 'طباعة PDF',
-            icon: const Icon(Icons.print),
+            tooltip: 'طباعة المستندات',
+            icon: const Icon(Icons.print_outlined),
             onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip: 'ماسح Google',
+            tooltip: 'ماسح المستندات الذكي',
             icon: _isScanning
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
+                    width: 18,
+                    height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       color: Colors.white,
                     ),
                   )
-                : const Icon(Icons.document_scanner),
+                : const Icon(Icons.document_scanner_outlined),
             onPressed: _isScanning
                 ? null
                 : () => _addNewImages(ImageSource.camera),
           ),
           IconButton(
-            tooltip: 'المعرض',
-            icon: const Icon(Icons.photo_library),
+            tooltip: 'استيراد من المعرض',
+            icon: const Icon(Icons.photo_library_outlined),
             onPressed: () => _addNewImages(ImageSource.gallery),
           ),
         ],
       ),
       body: Column(
         children: [
+          // شريط الأدوات العلوي الاحترافي (بدون رموز طفولية)
           Container(
-            height: 50,
-            color: const Color(0xFF1E293B),
+            height: 48,
+            color: const Color(0xFF111827),
             child: ListView(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               children: [
-                _buildToolBtn('مستمسكات', _activeTabMode == 'docs', () {
-                  setState(() {
-                    _activeTabMode = 'docs';
-                  });
-                }),
-                _buildToolBtn('صور', _activeTabMode == 'photos', () {
-                  setState(() {
-                    _activeTabMode = 'photos';
-                  });
-                }),
-                const SizedBox(width: 5),
                 _buildToolBtn(
-                  'قص يدوي ✂️',
-                  false,
-                  _manualCropActiveItem,
-                  const Color(0xFF06B6D4),
+                  'المستمسكات',
+                  Icons.badge_outlined,
+                  _activeTabMode == 'docs',
+                  () => setState(() => _activeTabMode = 'docs'),
                 ),
                 _buildToolBtn(
-                  'ترتيب 📐',
-                  false,
+                  'الصور الشخصية',
+                  Icons.person_outline,
+                  _activeTabMode == 'photos',
+                  () => setState(() => _activeTabMode = 'photos'),
+                ),
+                const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
+                _buildActionBtn(
+                  'قص الأطراف',
+                  Icons.crop,
+                  _manualCropActiveItem,
+                  const Color(0xFF0EA5E9),
+                ),
+                _buildActionBtn(
+                  'تنسيق تلقائي',
+                  Icons.grid_view,
                   _autoAlignItems,
                   const Color(0xFF10B981),
                 ),
-                _buildToolBtn(
-                  'تدوير 🔄',
-                  false,
+                _buildActionBtn(
+                  'تدوير',
+                  Icons.rotate_right,
                   _rotateActiveItem,
-                  const Color(0xFF94A3B8),
+                  const Color(0xFF64748B),
                 ),
-                _buildToolBtn(
-                  'نسخ 📋',
-                  false,
+                _buildActionBtn(
+                  'نسخ',
+                  Icons.copy_all,
                   _duplicateActiveItem,
-                  const Color(0xFFA78BFA),
+                  const Color(0xFF8B5CF6),
                 ),
               ],
             ),
@@ -637,55 +633,56 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           Expanded(
             child: Row(
               children: [
+                // اللوحة الجانبية القياسية
                 Container(
-                  width: 105,
-                  color: const Color(0xFFF8FAFC),
+                  width: 110,
+                  color: const Color(0xFF1E293B),
                   child: Column(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
                         width: double.infinity,
-                        color: const Color(0xFF0369A1),
+                        color: const Color(0xFF0F172A),
                         child: const Text(
-                          'القياسات',
+                          'المقاسات القياسية',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
+                            color: Colors.white70,
+                            fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
                       Expanded(
                         child: ListView(
-                          padding: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.all(6),
                           children: _activeTabMode == 'docs'
                               ? [
                                   _buildSizeBtn(
                                     'بطاقة موحدة',
-                                    '8.5×5.4 سم',
+                                    '8.5 × 5.4 سم',
                                     () => _resizeActiveItem(85, 54, curved: true),
                                   ),
                                   _buildSizeBtn(
                                     'بطاقة سكن',
-                                    '8.8×5.8 سم',
+                                    '8.8 × 5.8 سم',
                                     () => _resizeActiveItem(88, 58, curved: true),
                                   ),
                                   _buildSizeBtn(
                                     'ورقة A4',
-                                    '21×29.7 سم',
+                                    '21 × 29.7 سم',
                                     () => _resizeActiveItem(
                                       210,
                                       297,
                                       curved: false,
                                     ),
-                                    clr: const Color(0xFF0F766E),
+                                    clr: const Color(0xFF0D9488),
                                   ),
                                 ]
                               : [
                                   _buildSizeBtn(
-                                    'معاملة',
-                                    '3.6×4.5 سم',
+                                    'صورة معاملة',
+                                    '3.6 × 4.5 سم',
                                     () => _resizeActiveItem(
                                       36,
                                       45,
@@ -693,8 +690,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                     ),
                                   ),
                                   _buildSizeBtn(
-                                    'مصغر',
-                                    '2.5×3.4 سم',
+                                    'صورة مصغرة',
+                                    '2.5 × 3.4 سم',
                                     () => _resizeActiveItem(
                                       25,
                                       34,
@@ -706,31 +703,45 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                       ),
                       if (_activeItem != null)
                         Padding(
-                          padding: const EdgeInsets.all(4),
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.all(6),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFDC2626), // سلة مهملات فخمة بلون أحمر غامق
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                              ),
+                              onPressed: _deleteActiveItem,
+                              icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                              label: const Text(
+                                'حذف العنصر',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
-                            onPressed: _deleteActiveItem,
-                            icon: const Icon(Icons.delete, size: 14),
-                            label: const Text('حذف', style: TextStyle(fontSize: 10)),
                           ),
                         ),
                     ],
                   ),
                 ),
+                // مساحة العمل (Canvas)
                 Expanded(
                   child: Container(
-                    color: const Color(0xFF0F172A),
+                    color: const Color(0xFF090D16),
                     child: Center(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
                           final scaleX =
-                              (constraints.maxWidth - 20) / pageWidthMm;
+                              (constraints.maxWidth - 30) / pageWidthMm;
                           final scaleY =
-                              (constraints.maxHeight - 20) / pageHeightMm;
+                              (constraints.maxHeight - 30) / pageHeightMm;
                           final scale = math.min(scaleX, scaleY);
 
                           return Container(
@@ -740,8 +751,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                               color: Colors.white,
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.5),
-                                  blurRadius: 10,
+                                  color: Colors.black.withOpacity(0.6),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 4),
                                 ),
                               ],
                             ),
@@ -774,9 +786,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                         borderRadius: radius,
                                         border: Border.all(
                                           color: active
-                                              ? Colors.blue
+                                              ? const Color(0xFF0284C7)
                                               : Colors.transparent,
-                                          width: active ? 2.5 : 1,
+                                          width: active ? 2.0 : 1,
                                         ),
                                       ),
                                       child: ClipRRect(
@@ -807,32 +819,74 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
   Widget _buildToolBtn(
     String label,
+    IconData icon,
     bool selected,
-    VoidCallback onTap, [
-    Color? color,
-  ]) {
-    final selectedColor = color ?? Colors.blue;
+    VoidCallback onTap,
+  ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: selected ? selectedColor.withOpacity(0.3) : Colors.transparent,
+            color: selected ? const Color(0xFF0284C7).withOpacity(0.2) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color: selected ? selectedColor : Colors.white30,
+              color: selected ? const Color(0xFF0284C7) : Colors.white24,
             ),
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: selected ? selectedColor : Colors.white,
-            ),
+          child: Row(
+            children: [
+              Icon(icon, size: 14, color: selected ? const Color(0xFF38BDF8) : Colors.white70),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: selected ? const Color(0xFF38BDF8) : Colors.white70,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionBtn(
+    String label,
+    IconData icon,
+    VoidCallback onTap,
+    Color color,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: color.withOpacity(0.4)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -843,16 +897,16 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     String title,
     String subtitle,
     VoidCallback onTap, {
-    Color clr = const Color(0xFF0369A1),
+    Color clr = const Color(0xFF0284C7),
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          backgroundColor: clr.withOpacity(0.1),
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          backgroundColor: clr.withOpacity(0.12),
           foregroundColor: clr,
-          side: BorderSide(color: clr.withOpacity(0.4)),
+          side: BorderSide(color: clr.withOpacity(0.3)),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(6),
           ),
@@ -869,6 +923,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 color: clr,
               ),
             ),
+            const SizedBox(height: 2),
             Text(
               subtitle,
               style: TextStyle(fontSize: 8, color: clr.withOpacity(0.8)),
@@ -941,13 +996,13 @@ class _CropScreenState extends State<CropScreen> {
               ),
               const SizedBox(width: 4),
               _filterChip(
-                'تحسين ✨',
+                'تحسين ذكي',
                 _filter == EnhanceMode.soft,
                 () => setState(() => _filter = EnhanceMode.soft),
               ),
               const SizedBox(width: 4),
               _filterChip(
-                'أبيض وأسود',
+                'أبيض وأسود رسمي',
                 _filter == EnhanceMode.bw,
                 () => setState(() => _filter = EnhanceMode.bw),
               ),
@@ -956,7 +1011,7 @@ class _CropScreenState extends State<CropScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.check, color: Colors.green),
+            icon: const Icon(Icons.check, color: Colors.greenAccent),
             onPressed: _applyCrop,
           ),
         ],
@@ -1023,8 +1078,8 @@ class _CropScreenState extends State<CropScreen> {
     void Function(double, double) onMove,
   ) {
     return Positioned(
-      left: il + rx * iw - 20,
-      top: it + ry * ih - 20,
+      left: il + rx * iw - 18,
+      top: it + ry * ih - 18,
       child: GestureDetector(
         onPanUpdate: (details) {
           final currentX = il + rx * iw;
@@ -1040,14 +1095,17 @@ class _CropScreenState extends State<CropScreen> {
           onMove(newX, newY);
         },
         child: Container(
-          width: 40,
-          height: 40,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.8),
+            color: const Color(0xFF0284C7).withOpacity(0.9),
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 2),
+            boxShadow: const [
+              BoxShadow(color: Colors.black45, blurRadius: 4),
+            ],
           ),
-          child: const Icon(Icons.crop, size: 18, color: Colors.white),
+          child: const Icon(Icons.control_camera, size: 16, color: Colors.white),
         ),
       ),
     );
@@ -1057,12 +1115,19 @@ class _CropScreenState extends State<CropScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? Colors.blue : Colors.black45,
-          borderRadius: BorderRadius.circular(12),
+          color: selected ? const Color(0xFF0284C7) : Colors.white12,
+          borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.white70,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
     );
   }
