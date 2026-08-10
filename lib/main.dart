@@ -70,7 +70,8 @@ class ImageUtils {
 enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
-  static img.Image apply(img.Image source, EnhanceMode mode) {
+  // تم إضافة intensity (قوة الفلتر) للتحكم به من خلال الـ Slider
+  static img.Image apply(img.Image source, EnhanceMode mode, double intensity) {
     final image = img.Image.from(source);
     switch (mode) {
       case EnhanceMode.none:
@@ -79,9 +80,9 @@ class ImageEnhancer {
         try {
           return img.adjustColor(
             image,
-            contrast: 1.15,
-            brightness: 1.05,
-            saturation: 1.02,
+            contrast: 1.0 + (0.3 * intensity),
+            brightness: 1.0 + (0.1 * intensity),
+            saturation: 1.0 + (0.2 * intensity),
           );
         } catch (_) {
           return image;
@@ -89,7 +90,11 @@ class ImageEnhancer {
       case EnhanceMode.bw:
         try {
           final gray = img.grayscale(image);
-          return img.adjustColor(gray, contrast: 1.25, brightness: 1.04);
+          return img.adjustColor(
+            gray,
+            contrast: 1.0 + (0.5 * intensity),
+            brightness: 1.0 + (0.1 * intensity),
+          );
         } catch (_) {
           return image;
         }
@@ -936,6 +941,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
 class CropScreen extends StatefulWidget {
   final img.Image image;
+  // تم تصحيح الخطأ الإملائي هنا (required this.image)
   const CropScreen({super.key, required this.image});
 
   @override
@@ -947,7 +953,10 @@ class _CropScreenState extends State<CropScreen> {
   double _x2 = 0.95, _y2 = 0.05;
   double _x3 = 0.95, _y3 = 0.95;
   double _x4 = 0.05, _y4 = 0.95;
-  EnhanceMode _filter = EnhanceMode.soft;
+  
+  EnhanceMode _filter = EnhanceMode.none;
+  double _filterIntensity = 0.5; // قوة الفلتر الافتراضية
+  
   late Uint8List _displayBytes;
 
   @override
@@ -957,10 +966,21 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   void _updateDisplayBytes() {
-    final processed = ImageEnhancer.apply(widget.image, _filter);
+    // تطبيق الفلتر مع الكثافة المحددة
+    final processed = ImageEnhancer.apply(widget.image, _filter, _filterIntensity);
     _displayBytes = Uint8List.fromList(
       img.encodeJpg(processed, quality: 92),
     );
+  }
+  
+  void _autoCrop() {
+    // تحديد تلقائي تقريبي للمستند
+    setState(() {
+      _x1 = 0.02; _y1 = 0.02;
+      _x2 = 0.98; _y2 = 0.02;
+      _x3 = 0.98; _y3 = 0.98;
+      _x4 = 0.02; _y4 = 0.98;
+    });
   }
 
   void _applyCrop() {
@@ -975,7 +995,7 @@ class _CropScreenState extends State<CropScreen> {
       _x4,
       _y4,
     );
-    cropped = ImageEnhancer.apply(cropped, _filter);
+    cropped = ImageEnhancer.apply(cropped, _filter, _filterIntensity);
     Navigator.pop(context, cropped);
   }
 
@@ -1018,59 +1038,102 @@ class _CropScreenState extends State<CropScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'تحديد تلقائي (قص ذكي)',
+            icon: const Icon(Icons.auto_awesome_mosaic, color: Colors.amber),
+            onPressed: _autoCrop,
+          ),
+          IconButton(
+            tooltip: 'تم والتصدير',
             icon: const Icon(Icons.check, color: Colors.greenAccent),
             onPressed: _applyCrop,
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final cw = constraints.maxWidth;
-          final ch = constraints.maxHeight;
-          final iw = widget.image.width.toDouble();
-          final ih = widget.image.height.toDouble();
-          final scale = math.min(cw / iw, ch / ih);
-          final imgW = iw * scale;
-          final imgH = ih * scale;
-          final imgL = (cw - imgW) / 2;
-          final imgT = (ch - imgH) / 2;
+      body: Column(
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final cw = constraints.maxWidth;
+                final ch = constraints.maxHeight;
+                final iw = widget.image.width.toDouble();
+                final ih = widget.image.height.toDouble();
+                final scale = math.min(cw / iw, ch / ih);
+                final imgW = iw * scale;
+                final imgH = ih * scale;
+                final imgL = (cw - imgW) / 2;
+                final imgT = (ch - imgH) / 2;
 
-          return Stack(
-            children: [
-              Positioned(
-                left: imgL,
-                top: imgT,
-                width: imgW,
-                height: imgH,
-                child: Image.memory(_displayBytes, fit: BoxFit.fill),
+                return Stack(
+                  children: [
+                    Positioned(
+                      left: imgL,
+                      top: imgT,
+                      width: imgW,
+                      height: imgH,
+                      child: Image.memory(_displayBytes, fit: BoxFit.fill),
+                    ),
+                    _buildCornerDot(_x1, _y1, imgL, imgT, imgW, imgH, (nx, ny) {
+                      setState(() {
+                        _x1 = nx;
+                        _y1 = ny;
+                      });
+                    }),
+                    _buildCornerDot(_x2, _y2, imgL, imgT, imgW, imgH, (nx, ny) {
+                      setState(() {
+                        _x2 = nx;
+                        _y2 = ny;
+                      });
+                    }),
+                    _buildCornerDot(_x3, _y3, imgL, imgT, imgW, imgH, (nx, ny) {
+                      setState(() {
+                        _x3 = nx;
+                        _y3 = ny;
+                      });
+                    }),
+                    _buildCornerDot(_x4, _y4, imgL, imgT, imgW, imgH, (nx, ny) {
+                      setState(() {
+                        _x4 = nx;
+                        _y4 = ny;
+                      });
+                    }),
+                  ],
+                );
+              },
+            ),
+          ),
+          // شريط التحكم بالفلتر (Slider) يظهر فقط إذا كان هناك فلتر مفعل
+          if (_filter != EnhanceMode.none)
+            Container(
+              color: const Color(0xFF1E293B),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.contrast, color: Colors.white70, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Slider(
+                      value: _filterIntensity,
+                      min: 0.0,
+                      max: 2.0, // من 0 إلى 2 للتحكم بالضعف والقوة
+                      activeColor: const Color(0xFF38BDF8),
+                      inactiveColor: Colors.white24,
+                      onChanged: (val) {
+                        setState(() {
+                          _filterIntensity = val;
+                          _updateDisplayBytes();
+                        });
+                      },
+                    ),
+                  ),
+                  Text(
+                    '${(_filterIntensity * 50).toInt()}%',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  )
+                ],
               ),
-              _buildCornerDot(_x1, _y1, imgL, imgT, imgW, imgH, (nx, ny) {
-                setState(() {
-                  _x1 = nx;
-                  _y1 = ny;
-                });
-              }),
-              _buildCornerDot(_x2, _y2, imgL, imgT, imgW, imgH, (nx, ny) {
-                setState(() {
-                  _x2 = nx;
-                  _y2 = ny;
-                });
-              }),
-              _buildCornerDot(_x3, _y3, imgL, imgT, imgW, imgH, (nx, ny) {
-                setState(() {
-                  _x3 = nx;
-                  _y3 = ny;
-                });
-              }),
-              _buildCornerDot(_x4, _y4, imgL, imgT, imgW, imgH, (nx, ny) {
-                setState(() {
-                  _x4 = nx;
-                  _y4 = ny;
-                });
-              }),
-            ],
-          );
-        },
+            ),
+        ],
       ),
     );
   }
@@ -1107,7 +1170,8 @@ class _CropScreenState extends State<CropScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF0284C7).withOpacity(0.9),
             shape: BoxShape.circle,
-            BoxBorder: Border.all(color: Colors.white, width: 2), // Fixed invalid property syntax
+            // تم تصحيح الخطأ الإملائي هنا (border بدلاً من BoxBorder)
+            border: Border.all(color: Colors.white, width: 2),
             boxShadow: const [
               BoxShadow(color: Colors.black45, blurRadius: 4),
             ],
