@@ -13,8 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
+
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -22,33 +24,70 @@ jobs:
           distribution: zulu
           java-version: '17'
 
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Verify Android Project
+
+      - name: Prepare Android Project
+        shell: bash
         run: |
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ -f "$MANIFEST" ]; then
+            echo "AndroidManifest.xml already exists."
+            echo "Keeping existing Android project."
+          else
+            echo "AndroidManifest.xml is missing."
+            echo "Creating Android project structure..."
+
+            flutter create . --platforms=android --org com.example
+
+            if [ ! -f "$MANIFEST" ]; then
+              echo "ERROR: AndroidManifest.xml could not be created."
+              exit 1
+            fi
+
+            echo "Android project created successfully."
+          fi
+
+
+      - name: Verify Android Project
+        shell: bash
+        run: |
+
+          echo "Checking Android files..."
+
           if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
             echo "ERROR: AndroidManifest.xml not found!"
             exit 1
           fi
 
-          echo "Android project found."
+          echo "AndroidManifest.xml found."
 
           if [ -f "android/app/src/main/cpp/CMakeLists.txt" ]; then
-            echo "CMake project found."
+            echo "CMakeLists.txt found."
+          else
+            echo "No CMakeLists.txt found."
           fi
+
 
       - name: Get Dependencies
         run: flutter pub get
 
+
       - name: Build APK
         run: flutter build apk --release --no-tree-shake-icons
 
+
       - name: Verify APK
+        shell: bash
         run: |
+
           APK="build/app/outputs/flutter-apk/app-release.apk"
 
           if [ ! -f "$APK" ]; then
@@ -56,8 +95,12 @@ jobs:
             exit 1
           fi
 
-          echo "APK successfully created:"
+          echo "======================================"
+          echo "APK successfully created"
+          echo "======================================"
+
           ls -lh "$APK"
+
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
