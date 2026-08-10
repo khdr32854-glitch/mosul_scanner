@@ -1,11 +1,11 @@
 name: mosul_scanner
 description: Mosul Scanner App
-publish_to: none
+publish_to: "none"
 
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.8.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -13,6 +13,7 @@ dependencies:
 
   image_picker: ^1.0.7
   image: ^4.1.7
+
   pdf: ^3.10.8
   printing: ^5.11.1
 
@@ -21,6 +22,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^3.0.0
 
 flutter:
