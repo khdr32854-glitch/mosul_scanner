@@ -1,48 +1,111 @@
-  /// المسح التلقائي الكامل عبر Google ML Kit (للكاميرا)
-  void _googleScan() async {
-    try {
-      final paths = await GoogleScanner.scan();
-      if (paths == null || paths.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تم إلغاء المسح أو لا توجد أذونات كاميرا')),
-          );
-        }
-        return;
-      }
-      
-      for (int i = 0; i < paths.length; i++) {
-        final raw = await File(paths[i]).readAsBytes();
-        final decoded = ImageUtils.decodeBytes(raw);
-        if (decoded == null) continue;
-        final encoded = Uint8List.fromList(ImageUtils.encodeJpg(decoded));
-        
-        if (!mounted) return;
-        setState(() {
-          final item = DocumentItem(
-            id: 'gs_${DateTime.now().millisecondsSinceEpoch}_$i',
-            image: decoded,
-            cachedBytes: encoded,
-            widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
-            heightMm: _activeTabMode == 'photos' ? 45.0 : (decoded.height.toDouble() / decoded.width.toDouble() * 85.0),
-            xMm: pageMarginMm + (_items.length * 4.0),
-            yMm: pageMarginMm + (_items.length * 4.0),
-            isPhotoMode: _activeTabMode == 'photos',
-            hasCurvedCorners: _activeTabMode == 'docs',
-          );
-          _items.add(item);
-          _activeItem = item;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('يرجى منح إذن الكاميرا من إعدادات الهاتف: $e'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      _addNewImages(ImageSource.camera);
-    }
-  }
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Mosul Scanner APK
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+
+      - name: Prepare Android Project
+        shell: bash
+        run: |
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ -f "$MANIFEST" ]; then
+            echo "AndroidManifest.xml already exists."
+            echo "Keeping existing Android project."
+          else
+            echo "AndroidManifest.xml is missing."
+            echo "Creating Android project structure..."
+
+            flutter create . --platforms=android --org com.example
+
+            if [ ! -f "$MANIFEST" ]; then
+              echo "ERROR: AndroidManifest.xml could not be created."
+              exit 1
+            fi
+
+            echo "Android project created successfully."
+          fi
+
+
+      - name: Verify Android Project
+        shell: bash
+        run: |
+
+          echo "Checking Android files..."
+
+          if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
+            echo "ERROR: AndroidManifest.xml not found!"
+            exit 1
+          fi
+
+          echo "AndroidManifest.xml found."
+
+          if [ -f "android/app/src/main/cpp/CMakeLists.txt" ]; then
+            echo "CMakeLists.txt found."
+          else
+            echo "No CMakeLists.txt found."
+          fi
+
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+
+      - name: Build APK
+        run: flutter build apk --release --no-tree-shake-icons
+
+
+      - name: Verify APK
+        shell: bash
+        run: |
+
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found!"
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "APK successfully created"
+          echo "======================================"
+
+          ls -lh "$APK"
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mosul-Scanner-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
