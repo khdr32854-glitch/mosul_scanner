@@ -14,26 +14,42 @@ jobs:
 
     steps:
 
-      # 1. تنزيل المشروع
+      # =====================================================
+      # 1. Checkout
+      # =====================================================
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =====================================================
       # 2. Java 17
+      # =====================================================
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
 
+      # =====================================================
       # 3. Flutter Stable
+      # =====================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # 4. التحقق من ملفات المشروع
-      - name: Verify Project
+      # =====================================================
+      # 4. Flutter Version
+      # =====================================================
+      - name: Flutter Version
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      # =====================================================
+      # 5. Verify Basic Project
+      # =====================================================
+      - name: Verify Basic Project
         run: |
           echo "===== PROJECT ====="
           ls -la
@@ -44,65 +60,193 @@ jobs:
           echo "===== PUBSPEC ====="
           cat pubspec.yaml
 
-          echo "===== ANDROID ====="
+          test -f pubspec.yaml
+          test -f lib/main.dart
+          test -f lib/crop_engine.dart
+
+          echo "Basic Flutter project OK."
+
+      # =====================================================
+      # 6. Create / Repair Android Project
+      # =====================================================
+      - name: Create Android Project
+        run: |
+          echo "===== ANDROID BEFORE ====="
+          find android -maxdepth 5 -type f -print || true
+
+          echo ""
+          echo "Checking Android project..."
+
+          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+            echo "Android project is incomplete."
+            echo "Generating missing Android project files..."
+
+            flutter create \
+              --platforms=android \
+              --org=com.mosul \
+              --project-name=mosul_scanner \
+              .
+
+          else
+            echo "AndroidManifest.xml already exists."
+          fi
+
+          echo ""
+          echo "===== ANDROID AFTER ====="
+          find android -maxdepth 6 -type f -print
+
+      # =====================================================
+      # 7. Configure Camera Permission
+      # =====================================================
+      - name: Configure Camera Permission
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          if not manifest.exists():
+              raise SystemExit(
+                  "ERROR: AndroidManifest.xml still does not exist!"
+              )
+
+          text = manifest.read_text()
+
+          permission = (
+              '<uses-permission android:name="android.permission.CAMERA"/>'
+          )
+
+          if permission not in text:
+              marker = (
+                  '<manifest '
+                  'xmlns:android="http://schemas.android.com/apk/res/android">'
+              )
+
+              if marker not in text:
+                  raise SystemExit(
+                      "ERROR: Android manifest marker not found!"
+                  )
+
+              text = text.replace(
+                  marker,
+                  marker + "\n\n    " + permission,
+                  1
+              )
+
+              manifest.write_text(text)
+
+          print("Camera permission configured successfully.")
+          PY
+
+      # =====================================================
+      # 8. Verify Android Project
+      # =====================================================
+      - name: Verify Android Project
+        run: |
+          echo "===== VERIFY ANDROID ====="
+
           test -d android
           test -f android/app/src/main/AndroidManifest.xml
 
-          echo "Project structure OK."
+          echo "AndroidManifest.xml found."
 
-      # 5. تنظيف Flutter
+          echo ""
+          echo "Searching for MainActivity..."
+
+          find android/app/src/main \
+            -type f \
+            \( -name "MainActivity.kt" -o -name "MainActivity.java" \) \
+            -print
+
+          if ! find android/app/src/main \
+            -type f \
+            \( -name "MainActivity.kt" -o -name "MainActivity.java" \) \
+            | grep -q "MainActivity"; then
+
+            echo "ERROR: MainActivity not found!"
+            exit 1
+          fi
+
+          echo "MainActivity found."
+          echo "Android project OK."
+
+      # =====================================================
+      # 9. Show Manifest
+      # =====================================================
+      - name: Show Manifest
+        run: |
+          echo "===== ANDROID MANIFEST ====="
+          cat android/app/src/main/AndroidManifest.xml
+
+      # =====================================================
+      # 10. Clean
+      # =====================================================
       - name: Clean Flutter
         run: |
           flutter clean
           rm -rf .dart_tool
           rm -rf build
 
-      # 6. تحميل Dependencies
+      # =====================================================
+      # 11. Get Dependencies
+      # =====================================================
       - name: Get Dependencies
         run: |
           flutter pub get
 
-      # 7. التأكد من المكتبات
+      # =====================================================
+      # 12. Check Dependencies
+      # =====================================================
       - name: Check Dependencies
         run: |
           flutter pub deps
 
-      # 8. التحقق من Google ML Kit
+      # =====================================================
+      # 13. Verify ML Kit
+      # =====================================================
       - name: Verify ML Kit
         run: |
+          echo "===== ML KIT ====="
+
           flutter pub deps | grep google_mlkit_document_scanner
-          test -f lib/crop_engine.dart
-          test -f lib/main.dart
 
-      # 9. Flutter Doctor
-      - name: Flutter Doctor
-        run: |
-          flutter --version
-          flutter doctor -v
+          echo "Google ML Kit Document Scanner found."
 
-      # 10. تحليل المشروع
+      # =====================================================
+      # 14. Analyze
+      # =====================================================
       - name: Analyze
         run: |
           flutter analyze
 
-      # 11. بناء APK
+      # =====================================================
+      # 15. Build APK
+      # =====================================================
       - name: Build APK
         run: |
           flutter build apk \
             --release \
             --no-tree-shake-icons
 
-      # 12. التأكد من APK
+      # =====================================================
+      # 16. Verify APK
+      # =====================================================
       - name: Verify APK
         run: |
           echo "===== APK ====="
+
           ls -lh build/app/outputs/flutter-apk/
 
-          test -f build/app/outputs/flutter-apk/app-release.apk
+          test -f \
+            build/app/outputs/flutter-apk/app-release.apk
 
-          echo "APK CREATED SUCCESSFULLY."
+          echo "APK created successfully."
 
-      # 13. رفع APK
+      # =====================================================
+      # 17. Upload APK
+      # =====================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
