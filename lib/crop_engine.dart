@@ -9,60 +9,80 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 /// MOSUL SCANNER - CROP ENGINE
 /// ===============================================================
 ///
-/// المسؤوليات:
-/// 1. تشغيل Google ML Kit Document Scanner
-/// 2. استقبال الصور الناتجة من Google
-/// 3. أدوات الصور
-/// 4. التحسين
-/// 5. القص اليدوي
-///
-/// ملاحظة مهمة:
-/// Google Document Scanner لا يحتاج Permission.camera
-/// من تطبيق Flutter نفسه.
-/// ===============================================================
-
-/// ===============================================================
+/// المسؤول عن:
 /// 1. Google ML Kit Document Scanner
+/// 2. معالجة الصور
+/// 3. التحسين
+/// 4. القص اليدوي
+///
+/// Google Document Scanner يعمل عبر Google Play services.
 /// ===============================================================
 
 class GoogleScanner {
   static Future<List<String>?> scan({
     int pageLimit = 10,
-    bool allowGallery = true,
+    bool allowGallery = false,
   }) async {
-    final options = DocumentScannerOptions(
-      documentFormats: const {
-        DocumentFormat.jpeg,
-      },
-      mode: ScannerMode.full,
-      pageLimit: pageLimit,
-      isGalleryImport: allowGallery,
-    );
-
-    final scanner = DocumentScanner(
-      options: options,
-    );
+    DocumentScanner? scanner;
 
     try {
+      debugPrint('==========================================');
+      debugPrint('MOSUL SCANNER - GOOGLE');
+      debugPrint('Creating DocumentScanner...');
+      debugPrint('==========================================');
+
+      const options = DocumentScannerOptions(
+        documentFormats: {
+          DocumentFormat.jpeg,
+        },
+        mode: ScannerMode.full,
+        pageLimit: 10,
+        isGalleryImport: false,
+      );
+
+      scanner = DocumentScanner(
+        options: options,
+      );
+
+      debugPrint('Opening Google Document Scanner...');
+
       final result = await scanner.scanDocument();
 
-      return result.images;
+      debugPrint('Google scanner returned.');
+      debugPrint('Images count: ${result.images.length}');
+
+      for (final path in result.images) {
+        debugPrint('Google image path: $path');
+      }
+
+      if (result.images.isEmpty) {
+        debugPrint(
+          'Google Document Scanner returned ZERO images.',
+        );
+        return <String>[];
+      }
+
+      return List<String>.from(result.images);
     } catch (e, stackTrace) {
       debugPrint('==========================================');
-      debugPrint('Google ML Kit Document Scanner Error');
+      debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
       debugPrint('$e');
       debugPrint('$stackTrace');
       debugPrint('==========================================');
 
       return null;
     } finally {
-      await scanner.close();
+      try {
+        await scanner?.close();
+      } catch (e) {
+        debugPrint('Scanner close error: $e');
+      }
     }
   }
 }
 
 /// ===============================================================
-/// 2. Image Utilities
+/// IMAGE UTILITIES
 /// ===============================================================
 
 class ImageUtils {
@@ -86,7 +106,7 @@ class ImageUtils {
       );
     } catch (e) {
       debugPrint('Image encode error: $e');
-      return [];
+      return <int>[];
     }
   }
 
@@ -98,7 +118,7 @@ class ImageUtils {
 }
 
 /// ===============================================================
-/// 3. Crop Result
+/// CROP RESULT
 /// ===============================================================
 
 class CropResult {
@@ -114,7 +134,7 @@ class CropResult {
 }
 
 /// ===============================================================
-/// 4. Image Enhancement
+/// IMAGE ENHANCER
 /// ===============================================================
 
 enum EnhanceMode {
@@ -143,7 +163,9 @@ class ImageEnhancer {
             saturation: 1.03,
           );
         } catch (e) {
-          debugPrint('Soft enhancement error: $e');
+          debugPrint(
+            'Soft enhancement error: $e',
+          );
           return image;
         }
 
@@ -157,7 +179,9 @@ class ImageEnhancer {
             brightness: 1.03,
           );
         } catch (e) {
-          debugPrint('BW enhancement error: $e');
+          debugPrint(
+            'BW enhancement error: $e',
+          );
           return image;
         }
     }
@@ -165,7 +189,7 @@ class ImageEnhancer {
 }
 
 /// ===============================================================
-/// 5. Manual Perspective Crop
+/// MANUAL CROP
 /// ===============================================================
 
 class ManualCrop {
@@ -189,47 +213,47 @@ class ManualCrop {
 
     final minX = (
       math.min(
-        math.min(x1, x2),
-        math.min(x3, x4),
-      ) *
-      w
+            math.min(x1, x2),
+            math.min(x3, x4),
+          ) *
+          w
     ).toInt().clamp(
-      0,
-      source.width - 1,
-    );
+          0,
+          source.width - 1,
+        );
 
     final maxX = (
       math.max(
-        math.max(x1, x2),
-        math.max(x3, x4),
-      ) *
-      w
+            math.max(x1, x2),
+            math.max(x3, x4),
+          ) *
+          w
     ).toInt().clamp(
-      1,
-      source.width,
-    );
+          1,
+          source.width,
+        );
 
     final minY = (
       math.min(
-        math.min(y1, y2),
-        math.min(y3, y4),
-      ) *
-      h
+            math.min(y1, y2),
+            math.min(y3, y4),
+          ) *
+          h
     ).toInt().clamp(
-      0,
-      source.height - 1,
-    );
+          0,
+          source.height - 1,
+        );
 
     final maxY = (
       math.max(
-        math.max(y1, y2),
-        math.max(y3, y4),
-      ) *
-      h
+            math.max(y1, y2),
+            math.max(y3, y4),
+          ) *
+          h
     ).toInt().clamp(
-      1,
-      source.height,
-    );
+          1,
+          source.height,
+        );
 
     final cropW = math.max(
       10,
@@ -252,12 +276,8 @@ class ManualCrop {
 }
 
 /// ===============================================================
-/// 6. Smart Crop Fallback
+/// SMART CROP FALLBACK
 /// ===============================================================
-///
-/// هذا ليس بديلًا عن Google ML Kit.
-/// يبقى كـ fallback فقط إذا احتجناه لاحقًا.
-///
 
 class SmartCrop {
   static CropResult detect(
@@ -273,7 +293,8 @@ class SmartCrop {
 
     const margin = 0.01;
 
-    final cropped = ManualCrop.cropPerspective(
+    final cropped =
+        ManualCrop.cropPerspective(
       source,
       margin,
       margin,
