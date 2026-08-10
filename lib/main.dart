@@ -67,7 +67,7 @@ class DocumentItem {
   void applyRotation() {
     if (rotationAngle % 360 == 0) return;
     image = rotatedImage;
-    cachedBytes = Uint8List.fromList(ImageUtils.encodeJpg(image));
+    cachedBytes = Uint8List.fromList(img.encodeJpg(image));
     final temp = widthMm;
     widthMm = heightMm;
     heightMm = temp;
@@ -76,7 +76,7 @@ class DocumentItem {
 
   void replaceImage(img.Image newImg) {
     image = newImg;
-    cachedBytes = Uint8List.fromList(ImageUtils.encodeJpg(newImg));
+    cachedBytes = Uint8List.fromList(img.encodeJpg(newImg));
     rotationAngle = 0;
     heightMm = (newImg.height.toDouble() / newImg.width.toDouble()) * widthMm;
   }
@@ -152,9 +152,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   }
 
   void _processAndAddImage(Uint8List bytes) {
-    final decodedImg = ImageUtils.decodeBytes(bytes);
+    final decodedImg = img.decodeImage(bytes);
     if (decodedImg != null) {
-      final encodedBytes = Uint8List.fromList(ImageUtils.encodeJpg(decodedImg));
+      final encodedBytes = Uint8List.fromList(img.encodeJpg(decodedImg));
       if (!mounted) return;
       setState(() {
         final newItem = DocumentItem(
@@ -262,7 +262,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     width: item.widthMm * PdfPageFormat.mm,
                     height: item.heightMm * PdfPageFormat.mm,
                     child: pw.Image(
-                      pw.MemoryImage(Uint8List.fromList(ImageUtils.encodeJpg(rotated, quality: 95))),
+                      pw.MemoryImage(Uint8List.fromList(img.encodeJpg(rotated, quality: 95))),
                       fit: pw.BoxFit.fill,
                     ),
                   ),
@@ -475,7 +475,7 @@ class _CropScreenState extends State<CropScreen> {
   @override
   void initState() {
     super.initState();
-    _displayBytes = Uint8List.fromList(ImageUtils.encodeJpg(widget.image, quality: 92));
+    _displayBytes = Uint8List.fromList(img.encodeJpg(widget.image, quality: 92));
   }
 
   void _applyCrop() {
