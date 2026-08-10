@@ -12,19 +12,19 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 /// ===============================================================
-/// MOSUL SCANNER - PROFESSIONAL EDITION
+/// MOSUL SCANNER - PROFESSIONAL EDITION (GOOGLE ML ENGINE)
 /// ===============================================================
 
 class GoogleScanner {
   static Future<List<String>?> scan({
     int pageLimit = 10,
-    bool allowGallery = false,
+    bool allowGallery = true, // تفعيل المعرض المدمج مع ذكاء جوجل
   }) async {
     final options = DocumentScannerOptions(
       documentFormats: const {
         DocumentFormat.jpeg,
       },
-      mode: ScannerMode.full,
+      mode: ScannerMode.full, // الوضع الكامل لتفعيل الذكاء الاصطناعي للقص والفلترة
       pageLimit: pageLimit,
       isGalleryImport: allowGallery,
     );
@@ -70,7 +70,6 @@ class ImageUtils {
 enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
-  // تم إضافة intensity (قوة الفلتر) للتحكم به من خلال الـ Slider
   static img.Image apply(img.Image source, EnhanceMode mode, double intensity) {
     final image = img.Image.from(source);
     switch (mode) {
@@ -248,6 +247,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
+  /// فتح ماسح جوجل الذكي للتعرف والقص التلقائي (من الكاميرا أو المعرض الداخلي)
   Future<void> _openGoogleScanner() async {
     if (_isScanning) return;
 
@@ -258,7 +258,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     try {
       final List<String>? paths = await GoogleScanner.scan(
         pageLimit: 10,
-        allowGallery: false,
+        allowGallery: true,
       );
 
       if (!mounted) return;
@@ -270,11 +270,12 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             final bytes = await file.readAsBytes();
             final decoded = img.decodeImage(bytes);
             if (decoded != null) {
+              // المستند قادم جاهزاً ومقصوصاً من جوجل، نضيفه للوحة مباشرة
               _addDecodedImage(decoded, isPhoto: false, curved: true);
             }
           }
         }
-        _showMessage('تم الاستيراد والقص التلقائي بنجاح');
+        _showMessage('تم الاستخراج والمعالجة بنجاح');
         return;
       }
     } catch (e) {
@@ -288,12 +289,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     }
   }
 
-  Future<void> _addNewImages(ImageSource source) async {
-    if (source == ImageSource.camera && _activeTabMode == 'docs') {
-      await _openGoogleScanner();
-      return;
-    }
-
+  /// استيراد يدوي عادي للصور الشخصية أو المستندات بدون قص ذكي
+  Future<void> _addManualImages(ImageSource source) async {
     try {
       if (source == ImageSource.camera) {
         final XFile? photo = await _picker.pickImage(
@@ -370,7 +367,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
     setState(() {
       final photoMode = isPhoto || _activeTabMode == 'photos';
-      final width = photoMode ? 36.0 : 85.0;
+      final width = photoMode ? 36.0 : 85.0; // القياس القياسي للموحدة
       final ratio = decodedImage.height / decodedImage.width;
       final height = photoMode ? 45.0 : width * ratio;
       final offset = _items.length * 4.0;
@@ -567,7 +564,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip: 'ماسح جوجل التلقائي',
+            tooltip: 'استخراج ذكي (كاميرا ومكتبة)', // الزر الأساسي للاعتماد على جوجل
             icon: _isScanning
                 ? const SizedBox(
                     width: 18,
@@ -577,13 +574,13 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                       color: Colors.white,
                     ),
                   )
-                : const Icon(Icons.document_scanner_outlined),
+                : const Icon(Icons.document_scanner),
             onPressed: _isScanning ? null : _openGoogleScanner,
           ),
           IconButton(
-            tooltip: 'استيراد من المعرض',
+            tooltip: 'إدراج صورة عادية',
             icon: const Icon(Icons.photo_library_outlined),
-            onPressed: () => _addNewImages(ImageSource.gallery),
+            onPressed: () => _addManualImages(ImageSource.gallery),
           ),
         ],
       ),
@@ -610,7 +607,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 ),
                 const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
                 _buildActionBtn(
-                  'قص الأطراف والفلترة',
+                  'تعديل دقيق للقص',
                   Icons.crop,
                   _manualCropActiveItem,
                   const Color(0xFF0EA5E9),
@@ -941,7 +938,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
 class CropScreen extends StatefulWidget {
   final img.Image image;
-  // تم تصحيح الخطأ الإملائي هنا (required this.image)
   const CropScreen({super.key, required this.image});
 
   @override
@@ -955,7 +951,7 @@ class _CropScreenState extends State<CropScreen> {
   double _x4 = 0.05, _y4 = 0.95;
   
   EnhanceMode _filter = EnhanceMode.none;
-  double _filterIntensity = 0.5; // قوة الفلتر الافتراضية
+  double _filterIntensity = 0.5;
   
   late Uint8List _displayBytes;
 
@@ -966,7 +962,6 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   void _updateDisplayBytes() {
-    // تطبيق الفلتر مع الكثافة المحددة
     final processed = ImageEnhancer.apply(widget.image, _filter, _filterIntensity);
     _displayBytes = Uint8List.fromList(
       img.encodeJpg(processed, quality: 92),
@@ -974,7 +969,6 @@ class _CropScreenState extends State<CropScreen> {
   }
   
   void _autoCrop() {
-    // تحديد تلقائي تقريبي للمستند
     setState(() {
       _x1 = 0.02; _y1 = 0.02;
       _x2 = 0.98; _y2 = 0.02;
@@ -1038,7 +1032,7 @@ class _CropScreenState extends State<CropScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'تحديد تلقائي (قص ذكي)',
+            tooltip: 'تحديد تقريبي',
             icon: const Icon(Icons.auto_awesome_mosaic, color: Colors.amber),
             onPressed: _autoCrop,
           ),
@@ -1102,7 +1096,6 @@ class _CropScreenState extends State<CropScreen> {
               },
             ),
           ),
-          // شريط التحكم بالفلتر (Slider) يظهر فقط إذا كان هناك فلتر مفعل
           if (_filter != EnhanceMode.none)
             Container(
               color: const Color(0xFF1E293B),
@@ -1115,7 +1108,7 @@ class _CropScreenState extends State<CropScreen> {
                     child: Slider(
                       value: _filterIntensity,
                       min: 0.0,
-                      max: 2.0, // من 0 إلى 2 للتحكم بالضعف والقوة
+                      max: 2.0,
                       activeColor: const Color(0xFF38BDF8),
                       inactiveColor: Colors.white24,
                       onChanged: (val) {
@@ -1170,7 +1163,6 @@ class _CropScreenState extends State<CropScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF0284C7).withOpacity(0.9),
             shape: BoxShape.circle,
-            // تم تصحيح الخطأ الإملائي هنا (border بدلاً من BoxBorder)
             border: Border.all(color: Colors.white, width: 2),
             boxShadow: const [
               BoxShadow(color: Colors.black45, blurRadius: 4),
