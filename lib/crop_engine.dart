@@ -2,20 +2,25 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
+import 'package:image/image.dart' as img;
 
 /// ===============================================================
 /// MOSUL SCANNER - CROP ENGINE
 /// ===============================================================
 ///
 /// المسؤول عن:
-/// 1. Google ML Kit Document Scanner
-/// 2. معالجة الصور
-/// 3. التحسين
+/// 1. تشغيل Google ML Kit Document Scanner
+/// 2. استلام مسارات الصور الناتجة
+/// 3. معالجة الصور
 /// 4. القص اليدوي
+/// 5. تحسين الصورة
 ///
-/// Google Document Scanner يعمل عبر Google Play services.
+/// Google ML Kit Document Scanner 0.5.0
+/// ===============================================================
+
+/// ===============================================================
+/// 1. GOOGLE DOCUMENT SCANNER
 /// ===============================================================
 
 class GoogleScanner {
@@ -23,46 +28,32 @@ class GoogleScanner {
     int pageLimit = 10,
     bool allowGallery = false,
   }) async {
-    DocumentScanner? scanner;
+    final options = DocumentScannerOptions(
+      documentFormats: const {
+        DocumentFormat.jpeg,
+      },
+      mode: ScannerMode.full,
+      pageLimit: pageLimit,
+      isGalleryImport: allowGallery,
+    );
+
+    final scanner = DocumentScanner(
+      options: options,
+    );
 
     try {
-      debugPrint('==========================================');
-      debugPrint('MOSUL SCANNER - GOOGLE');
-      debugPrint('Creating DocumentScanner...');
-      debugPrint('==========================================');
-
-      const options = DocumentScannerOptions(
-        documentFormats: {
-          DocumentFormat.jpeg,
-        },
-        mode: ScannerMode.full,
-        pageLimit: 10,
-        isGalleryImport: false,
-      );
-
-      scanner = DocumentScanner(
-        options: options,
-      );
-
-      debugPrint('Opening Google Document Scanner...');
+      debugPrint('MOSUL SCANNER: Opening Google Document Scanner');
 
       final result = await scanner.scanDocument();
 
-      debugPrint('Google scanner returned.');
-      debugPrint('Images count: ${result.images.length}');
+      final images = result.images;
 
-      for (final path in result.images) {
-        debugPrint('Google image path: $path');
-      }
+      debugPrint(
+        'MOSUL SCANNER: Google returned '
+        '${images?.length ?? 0} image(s)',
+      );
 
-      if (result.images.isEmpty) {
-        debugPrint(
-          'Google Document Scanner returned ZERO images.',
-        );
-        return <String>[];
-      }
-
-      return List<String>.from(result.images);
+      return images;
     } catch (e, stackTrace) {
       debugPrint('==========================================');
       debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
@@ -73,16 +64,16 @@ class GoogleScanner {
       return null;
     } finally {
       try {
-        await scanner?.close();
+        await scanner.close();
       } catch (e) {
-        debugPrint('Scanner close error: $e');
+        debugPrint('Google Scanner close error: $e');
       }
     }
   }
 }
 
 /// ===============================================================
-/// IMAGE UTILITIES
+/// 2. IMAGE UTILITIES
 /// ===============================================================
 
 class ImageUtils {
@@ -95,18 +86,20 @@ class ImageUtils {
     }
   }
 
-  static List<int> encodeJpg(
+  static Uint8List encodeJpg(
     img.Image image, {
     int quality = 92,
   }) {
     try {
-      return img.encodeJpg(
-        image,
-        quality: quality,
+      return Uint8List.fromList(
+        img.encodeJpg(
+          image,
+          quality: quality,
+        ),
       );
     } catch (e) {
       debugPrint('Image encode error: $e');
-      return <int>[];
+      return Uint8List(0);
     }
   }
 
@@ -118,7 +111,7 @@ class ImageUtils {
 }
 
 /// ===============================================================
-/// CROP RESULT
+/// 3. CROP RESULT
 /// ===============================================================
 
 class CropResult {
@@ -134,7 +127,7 @@ class CropResult {
 }
 
 /// ===============================================================
-/// IMAGE ENHANCER
+/// 4. IMAGE ENHANCER
 /// ===============================================================
 
 enum EnhanceMode {
@@ -163,9 +156,7 @@ class ImageEnhancer {
             saturation: 1.03,
           );
         } catch (e) {
-          debugPrint(
-            'Soft enhancement error: $e',
-          );
+          debugPrint('Soft enhancement error: $e');
           return image;
         }
 
@@ -179,9 +170,7 @@ class ImageEnhancer {
             brightness: 1.03,
           );
         } catch (e) {
-          debugPrint(
-            'BW enhancement error: $e',
-          );
+          debugPrint('BW enhancement error: $e');
           return image;
         }
     }
@@ -189,7 +178,21 @@ class ImageEnhancer {
 }
 
 /// ===============================================================
-/// MANUAL CROP
+/// 5. MANUAL CROP
+/// ===============================================================
+///
+/// الإحداثيات normalized:
+/// 0.0 = بداية الصورة
+/// 1.0 = نهاية الصورة
+///
+/// ترتيب النقاط:
+/// 1 = أعلى يسار
+/// 2 = أعلى يمين
+/// 3 = أسفل يمين
+/// 4 = أسفل يسار
+///
+/// ملاحظة:
+/// هذه النسخة تنفذ قص المستطيل المحيط بالنقاط.
 /// ===============================================================
 
 class ManualCrop {
@@ -211,72 +214,62 @@ class ManualCrop {
     final w = source.width.toDouble();
     final h = source.height.toDouble();
 
-    final minX = (
-      math.min(
-            math.min(x1, x2),
-            math.min(x3, x4),
-          ) *
-          w
-    ).toInt().clamp(
-          0,
-          source.width - 1,
-        );
+    final valuesX = <double>[
+      x1,
+      x2,
+      x3,
+      x4,
+    ];
 
-    final maxX = (
-      math.max(
-            math.max(x1, x2),
-            math.max(x3, x4),
-          ) *
-          w
-    ).toInt().clamp(
-          1,
-          source.width,
-        );
+    final valuesY = <double>[
+      y1,
+      y2,
+      y3,
+      y4,
+    ];
 
-    final minY = (
-      math.min(
-            math.min(y1, y2),
-            math.min(y3, y4),
-          ) *
-          h
-    ).toInt().clamp(
-          0,
-          source.height - 1,
-        );
+    final minNormalizedX =
+        valuesX.reduce(math.min).clamp(0.0, 1.0);
 
-    final maxY = (
-      math.max(
-            math.max(y1, y2),
-            math.max(y3, y4),
-          ) *
-          h
-    ).toInt().clamp(
-          1,
-          source.height,
-        );
+    final maxNormalizedX =
+        valuesX.reduce(math.max).clamp(0.0, 1.0);
 
-    final cropW = math.max(
-      10,
-      maxX - minX,
-    );
+    final minNormalizedY =
+        valuesY.reduce(math.min).clamp(0.0, 1.0);
 
-    final cropH = math.max(
-      10,
-      maxY - minY,
-    );
+    final maxNormalizedY =
+        valuesY.reduce(math.max).clamp(0.0, 1.0);
+
+    int minX = (minNormalizedX * w).round();
+    int maxX = (maxNormalizedX * w).round();
+
+    int minY = (minNormalizedY * h).round();
+    int maxY = (maxNormalizedY * h).round();
+
+    minX = minX.clamp(0, source.width - 1);
+    minY = minY.clamp(0, source.height - 1);
+
+    maxX = maxX.clamp(minX + 1, source.width);
+    maxY = maxY.clamp(minY + 1, source.height);
+
+    final cropWidth =
+        math.max(10, maxX - minX);
+
+    final cropHeight =
+        math.max(10, maxY - minY);
 
     return img.copyCrop(
       source,
       x: minX,
       y: minY,
-      width: cropW,
-      height: cropH,
+      width: cropWidth,
+      height: cropHeight,
     );
   }
 }
 
 /// ===============================================================
-/// SMART CROP FALLBACK
+/// 6. SMART CROP FALLBACK
 /// ===============================================================
 
 class SmartCrop {
@@ -287,14 +280,13 @@ class SmartCrop {
       return CropResult(
         image: img.Image.from(source),
         changed: false,
-        confidence: 0,
+        confidence: 0.0,
       );
     }
 
     const margin = 0.01;
 
-    final cropped =
-        ManualCrop.cropPerspective(
+    final cropped = ManualCrop.cropPerspective(
       source,
       margin,
       margin,
