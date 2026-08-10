@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -32,7 +31,9 @@ class GoogleScanner {
     // setResultFormats(RESULT_FORMAT_JPEG, RESULT_FORMAT_PDF)
     // setScannerMode(SCANNER_MODE_FULL)
 
-    const options = DocumentScannerOptions(
+    // ملاحظة: DocumentScannerOptions ليس له constructor من نوع const،
+    // لذلك يجب استخدام final وليس const (هذا كان سبب فشل flutter analyze).
+    final options = DocumentScannerOptions(
       documentFormats: {
         DocumentFormat.jpeg,
         DocumentFormat.pdf,
