@@ -99,7 +99,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  /// طلب الأذونات برمجياً أثناء التشغيل
   Future<bool> _checkAndRequestPermissions() async {
     var cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
