@@ -3,10 +3,12 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 import 'crop_engine.dart';
 
@@ -58,7 +60,9 @@ class DocumentItem {
   });
 
   img.Image get rotatedImage {
-    if (rotationAngle % 360 == 0) return image;
+    if (rotationAngle % 360 == 0) {
+      return image;
+    }
 
     final normalized = (rotationAngle % 360 + 360) % 360;
 
@@ -81,9 +85,7 @@ class DocumentItem {
     if (rotationAngle % 360 == 0) return;
 
     image = rotatedImage;
-    cachedBytes = Uint8List.fromList(
-      img.encodeJpg(image),
-    );
+    cachedBytes = Uint8List.fromList(img.encodeJpg(image));
 
     final temp = widthMm;
     widthMm = heightMm;
@@ -94,18 +96,12 @@ class DocumentItem {
 
   void replaceImage(img.Image newImg) {
     image = newImg;
-
-    cachedBytes = Uint8List.fromList(
-      img.encodeJpg(newImg),
-    );
-
+    cachedBytes = Uint8List.fromList(img.encodeJpg(newImg));
     rotationAngle = 0;
 
     if (newImg.width > 0) {
       heightMm =
-          (newImg.height.toDouble() /
-                  newImg.width.toDouble()) *
-              widthMm;
+          (newImg.height.toDouble() / newImg.width.toDouble()) * widthMm;
     }
   }
 }
@@ -114,137 +110,216 @@ class MainScannerScreen extends StatefulWidget {
   const MainScannerScreen({super.key});
 
   @override
-  State<MainScannerScreen> createState() =>
-      _MainScannerScreenState();
+  State<MainScannerScreen> createState() => _MainScannerScreenState();
 }
 
-class _MainScannerScreenState
-    extends State<MainScannerScreen> {
+class _MainScannerScreenState extends State<MainScannerScreen> {
   final List<DocumentItem> _items = [];
 
   DocumentItem? _activeItem;
 
+  final ImagePicker _picker = ImagePicker();
+
   String _activeTabMode = 'docs';
+
+  bool _isScanning = false;
 
   static const double pageWidthMm = 210.0;
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  /// ===========================================================
-  /// GOOGLE DOCUMENT SCANNER
-  /// ===========================================================
+  // ============================================================
+  // GOOGLE ML KIT DOCUMENT SCANNER
+  // ============================================================
 
-  Future<void> _openGoogleScanner() async {
+  Future<void> _scanDocumentWithGoogle() async {
+    if (_isScanning) return;
+
+    setState(() {
+      _isScanning = true;
+    });
+
+    DocumentScanner? scanner;
+
     try {
-      final paths = await GoogleScanner.scan(
+      const Set<DocumentFormat> documentFormats = {
+        DocumentFormat.jpeg,
+      };
+
+      final options = DocumentScannerOptions(
+        documentFormats: documentFormats,
+
+        // full = المسح الكامل مع كشف المستند والتعديل
+        mode: ScannerMode.full,
+
+        // الحد الأقصى للصفحات في جلسة واحدة
         pageLimit: 10,
-        allowGallery: true,
+
+        // السماح باستيراد الصور من المعرض من داخل ماسح Google
+        isGalleryImport: true,
       );
 
-      if (!mounted) return;
+      scanner = DocumentScanner(options: options);
 
-      if (paths == null || paths.isEmpty) {
+      debugPrint('Starting Google ML Kit Document Scanner...');
+
+      final result = await scanner.scanDocument();
+
+      final images = result.images;
+
+      if (images == null || images.isEmpty) {
+        debugPrint('Google Scanner returned no images.');
         return;
       }
 
-      for (final path in paths) {
+      debugPrint(
+        'Google Scanner returned ${images.length} image(s).',
+      );
+
+      for (final path in images) {
         try {
           final file = File(path);
 
           if (!await file.exists()) {
+            debugPrint('Scanner image does not exist: $path');
             continue;
           }
 
           final bytes = await file.readAsBytes();
 
-          _processAndAddImage(bytes);
-        } catch (e) {
-          debugPrint(
-            'Error reading scanner image: $e',
+          _processAndAddImage(
+            bytes,
+            forceDocumentMode: true,
           );
+        } catch (e) {
+          debugPrint('Error reading scanner image: $e');
         }
       }
+    } catch (e, stackTrace) {
+      debugPrint('Google Document Scanner Error: $e');
+      debugPrint('$stackTrace');
 
-      if (mounted && paths.isNotEmpty) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'تم مسح ${paths.length} مستند بنجاح',
+              'تعذر تشغيل ماسح Google: $e',
+              maxLines: 3,
             ),
-            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.red,
           ),
         );
       }
-    } catch (e) {
-      if (!mounted) return;
+    } finally {
+      try {
+        await scanner?.close();
+      } catch (_) {}
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'حدث خطأ في ماسح Google: $e',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+      }
     }
   }
 
-  /// ===========================================================
-  /// إضافة صورة من المعرض
-  /// ===========================================================
+  // ============================================================
+  // IMAGE PICKER - PHOTOS MODE
+  // ============================================================
+
+  Future<void> _openPhotoCamera() async {
+    try {
+      final XFile? photo = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 100,
+      );
+
+      if (photo == null) return;
+
+      final bytes = await File(photo.path).readAsBytes();
+
+      _processAndAddImage(
+        bytes,
+        forceDocumentMode: false,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في التقاط الصورة: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _openGallery() async {
     try {
-      final result = await GoogleScanner.scan(
-        pageLimit: 10,
-        allowGallery: true,
+      final List<XFile> files = await _picker.pickMultiImage(
+        imageQuality: 100,
       );
 
-      if (!mounted) return;
+      if (files.isEmpty) return;
 
-      if (result == null || result.isEmpty) {
-        return;
-      }
-
-      for (final path in result) {
+      for (final file in files) {
         try {
-          final file = File(path);
+          final bytes = await File(file.path).readAsBytes();
 
-          if (!await file.exists()) {
-            continue;
-          }
-
-          final bytes = await file.readAsBytes();
-
-          _processAndAddImage(bytes);
-        } catch (e) {
-          debugPrint(
-            'Gallery image error: $e',
+          _processAndAddImage(
+            bytes,
+            forceDocumentMode: _activeTabMode == 'docs',
           );
+        } catch (e) {
+          debugPrint('Gallery image error: $e');
         }
       }
     } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'خطأ في استيراد الصور: $e',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في فتح المعرض: $e'),
+            backgroundColor: Colors.red,
           ),
-          backgroundColor: Colors.red,
-        ),
-      );
+        );
+      }
     }
   }
 
-  /// ===========================================================
-  /// معالجة الصورة
-  /// ===========================================================
+  // ============================================================
+  // MAIN CAMERA / SCANNER BUTTON
+  // ============================================================
 
-  void _processAndAddImage(Uint8List bytes) {
+  Future<void> _openCamera() async {
+    if (_activeTabMode == 'docs') {
+      // المستمسكات = Google ML Kit
+      await _scanDocumentWithGoogle();
+    } else {
+      // الصور = الكاميرا العادية
+      await _openPhotoCamera();
+    }
+  }
+
+  // ============================================================
+  // ADD IMAGE TO PROJECT
+  // ============================================================
+
+  void _processAndAddImage(
+    Uint8List bytes, {
+    required bool forceDocumentMode,
+  }) {
     final decodedImg = img.decodeImage(bytes);
 
     if (decodedImg == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر قراءة الصورة'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
       return;
     }
 
@@ -257,38 +332,40 @@ class _MainScannerScreenState
 
     if (!mounted) return;
 
+    final bool documentMode =
+        forceDocumentMode || _activeTabMode == 'docs';
+
+    final double width =
+        documentMode ? 85.0 : 36.0;
+
+    final double height =
+        documentMode
+            ? (decodedImg.height.toDouble() /
+                    decodedImg.width.toDouble()) *
+                width
+            : 45.0;
+
     setState(() {
       final newItem = DocumentItem(
         id: '${DateTime.now().millisecondsSinceEpoch}_${_items.length}',
         image: decodedImg,
         cachedBytes: encodedBytes,
-        widthMm:
-            _activeTabMode == 'photos'
-                ? 36.0
-                : 85.0,
-        heightMm:
-            _activeTabMode == 'photos'
-                ? 45.0
-                : (decodedImg.height.toDouble() /
-                        decodedImg.width.toDouble()) *
-                    85.0,
-        xMm:
-            pageMarginMm +
-            (_items.length * 4.0),
-        yMm:
-            pageMarginMm +
-            (_items.length * 4.0),
-        isPhotoMode:
-            _activeTabMode == 'photos',
-        hasCurvedCorners:
-            _activeTabMode == 'docs',
+        widthMm: width,
+        heightMm: height,
+        xMm: pageMarginMm + (_items.length * 4.0),
+        yMm: pageMarginMm + (_items.length * 4.0),
+        isPhotoMode: !documentMode,
+        hasCurvedCorners: documentMode,
       );
 
       _items.add(newItem);
-
       _activeItem = newItem;
     });
   }
+
+  // ============================================================
+  // SIZE
+  // ============================================================
 
   void _resizeActiveItem(
     double w,
@@ -306,13 +383,22 @@ class _MainScannerScreenState
     });
   }
 
+  // ============================================================
+  // ROTATE
+  // ============================================================
+
   void _rotateActiveItem() {
     if (_activeItem == null) return;
 
     setState(() {
+      _activeItem!.rotationAngle += 90;
       _activeItem!.applyRotation();
     });
   }
+
+  // ============================================================
+  // DUPLICATE
+  // ============================================================
 
   void _duplicateActiveItem() {
     if (_activeItem == null) return;
@@ -321,15 +407,12 @@ class _MainScannerScreenState
 
     setState(() {
       final dup = DocumentItem(
-        id:
-            '${DateTime.now().millisecondsSinceEpoch}_${_items.length}',
+        id: '${DateTime.now().millisecondsSinceEpoch}_${_items.length}',
         image: img.copyResize(
           src.image,
           width: src.image.width,
         ),
-        cachedBytes: Uint8List.fromList(
-          src.cachedBytes,
-        ),
+        cachedBytes: Uint8List.fromList(src.cachedBytes),
         widthMm: src.widthMm,
         heightMm: src.heightMm,
         xMm: src.xMm + 5.0,
@@ -340,12 +423,17 @@ class _MainScannerScreenState
       );
 
       _items.add(dup);
-
       _activeItem = dup;
     });
   }
 
+  // ============================================================
+  // AUTO ALIGN
+  // ============================================================
+
   void _autoAlignItems() {
+    if (_items.isEmpty) return;
+
     setState(() {
       double currentX = pageMarginMm;
       double currentY = pageMarginMm;
@@ -371,6 +459,10 @@ class _MainScannerScreenState
     });
   }
 
+  // ============================================================
+  // MANUAL CROP
+  // ============================================================
+
   Future<void> _manualCropActiveItem() async {
     if (_activeItem == null) return;
 
@@ -390,6 +482,10 @@ class _MainScannerScreenState
     }
   }
 
+  // ============================================================
+  // PRINT / PDF
+  // ============================================================
+
   Future<void> _exportAndPrint() async {
     if (_items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -397,6 +493,7 @@ class _MainScannerScreenState
           content: Text('لا توجد صور للطباعة'),
         ),
       );
+
       return;
     }
 
@@ -411,40 +508,28 @@ class _MainScannerScreenState
             children: _items.map((item) {
               final rotated = item.rotatedImage;
 
+              final imageBytes = Uint8List.fromList(
+                img.encodeJpg(
+                  rotated,
+                  quality: 95,
+                ),
+              );
+
               return pw.Positioned(
-                left:
-                    item.xMm *
-                    PdfPageFormat.mm,
-                top:
-                    item.yMm *
-                    PdfPageFormat.mm,
+                left: item.xMm * PdfPageFormat.mm,
+                top: item.yMm * PdfPageFormat.mm,
                 child: pw.ClipRRect(
-                  horizontalRadius:
-                      item.hasCurvedCorners
-                          ? 3.5 *
-                              PdfPageFormat.mm
-                          : 0,
-                  verticalRadius:
-                      item.hasCurvedCorners
-                          ? 3.5 *
-                              PdfPageFormat.mm
-                          : 0,
+                  horizontalRadius: item.hasCurvedCorners
+                      ? 3.5 * PdfPageFormat.mm
+                      : 0,
+                  verticalRadius: item.hasCurvedCorners
+                      ? 3.5 * PdfPageFormat.mm
+                      : 0,
                   child: pw.SizedBox(
-                    width:
-                        item.widthMm *
-                        PdfPageFormat.mm,
-                    height:
-                        item.heightMm *
-                        PdfPageFormat.mm,
+                    width: item.widthMm * PdfPageFormat.mm,
+                    height: item.heightMm * PdfPageFormat.mm,
                     child: pw.Image(
-                      pw.MemoryImage(
-                        Uint8List.fromList(
-                          img.encodeJpg(
-                            rotated,
-                            quality: 95,
-                          ),
-                        ),
-                      ),
+                      pw.MemoryImage(imageBytes),
                       fit: pw.BoxFit.fill,
                     ),
                   ),
@@ -457,16 +542,20 @@ class _MainScannerScreenState
     );
 
     await Printing.layoutPdf(
-      onLayout: (format) async => pdf.save(),
+      onLayout: (format) async {
+        return pdf.save();
+      },
     );
   }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF0F172A),
-
+      backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         title: const Text(
           'مكتب علاء الحديدي - الماسح والطباعة',
@@ -475,10 +564,8 @@ class _MainScannerScreenState
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor:
-            const Color(0xFF0284C7),
+        backgroundColor: const Color(0xFF0284C7),
         foregroundColor: Colors.white,
-
         actions: [
           IconButton(
             icon: const Icon(
@@ -489,23 +576,31 @@ class _MainScannerScreenState
             onPressed: _exportAndPrint,
           ),
 
-          /// زر Google Scanner
           IconButton(
-            icon: const Icon(
-              Icons.document_scanner,
-              size: 22,
-            ),
-            tooltip: 'ماسح Google',
-            onPressed: _openGoogleScanner,
+            icon: _isScanning
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(
+                    Icons.document_scanner,
+                    size: 20,
+                  ),
+            tooltip: 'مسح مستند',
+            onPressed:
+                _isScanning ? null : _openCamera,
           ),
 
-          /// استيراد
           IconButton(
             icon: const Icon(
               Icons.photo_library,
               size: 20,
             ),
-            tooltip: 'استيراد',
+            tooltip: 'المعرض',
             onPressed: _openGallery,
           ),
         ],
@@ -513,15 +608,16 @@ class _MainScannerScreenState
 
       body: Column(
         children: [
+          // ======================================================
+          // TOP TOOLS
+          // ======================================================
+
           Container(
             height: 48,
-            color:
-                const Color(0xFF1E293B),
+            color: const Color(0xFF1E293B),
             child: ListView(
-              scrollDirection:
-                  Axis.horizontal,
-              padding:
-                  const EdgeInsets.symmetric(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
                 horizontal: 6,
                 vertical: 6,
               ),
@@ -541,8 +637,7 @@ class _MainScannerScreenState
                   _activeTabMode == 'photos',
                   () {
                     setState(() {
-                      _activeTabMode =
-                          'photos';
+                      _activeTabMode = 'photos';
                     });
                   },
                 ),
@@ -551,6 +646,13 @@ class _MainScannerScreenState
                   color: Colors.white24,
                   indent: 6,
                   endIndent: 6,
+                ),
+
+                _buildToolBtn(
+                  'مسح Google',
+                  false,
+                  _scanDocumentWithGoogle,
+                  const Color(0xFF22C55E),
                 ),
 
                 _buildToolBtn(
@@ -584,130 +686,109 @@ class _MainScannerScreenState
             ),
           ),
 
+          // ======================================================
+          // MAIN AREA
+          // ======================================================
+
           Expanded(
             child: Row(
               children: [
+                // ==================================================
+                // LEFT SIZE PANEL
+                // ==================================================
+
                 Container(
                   width: 100,
-                  color:
-                      const Color(0xFFF8FAFC),
+                  color: const Color(0xFFF8FAFC),
                   child: Column(
                     children: [
                       Container(
-                        padding:
-                            const EdgeInsets.all(6),
-                        color:
-                            const Color(0xFF0369A1),
-                        width:
-                            double.infinity,
+                        padding: const EdgeInsets.all(6),
+                        color: const Color(0xFF0369A1),
+                        width: double.infinity,
                         child: const Text(
                           'القياسات',
-                          textAlign:
-                              TextAlign.center,
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 11,
-                            fontWeight:
-                                FontWeight.bold,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
 
                       Expanded(
                         child: ListView(
-                          padding:
-                              const EdgeInsets.all(4),
-                          children:
-                              _activeTabMode ==
-                                      'docs'
-                                  ? [
-                                      _buildSizeBtn(
-                                        'بطاقة موحدة',
-                                        '8.5×5.4 سم',
-                                        () =>
-                                            _resizeActiveItem(
-                                          85,
-                                          54,
-                                          curved:
-                                              true,
-                                        ),
-                                      ),
-                                      _buildSizeBtn(
-                                        'بطاقة سكن',
-                                        '8.8×5.8 سم',
-                                        () =>
-                                            _resizeActiveItem(
-                                          88,
-                                          58,
-                                          curved:
-                                              true,
-                                        ),
-                                      ),
-                                      _buildSizeBtn(
-                                        'ورقة A4',
-                                        '21×29.7 سم',
-                                        () =>
-                                            _resizeActiveItem(
-                                          210,
-                                          297,
-                                          curved:
-                                              false,
-                                        ),
-                                        clr:
-                                            const Color(
-                                          0xFF0F766E,
-                                        ),
-                                      ),
-                                    ]
-                                  : [
-                                      _buildSizeBtn(
-                                        'معاملة',
-                                        '3.6×4.5 سم',
-                                        () =>
-                                            _resizeActiveItem(
-                                          36,
-                                          45,
-                                          isPhoto:
-                                              true,
-                                        ),
-                                      ),
-                                      _buildSizeBtn(
-                                        'مصغر',
-                                        '2.5×3.4 سم',
-                                        () =>
-                                            _resizeActiveItem(
-                                          25,
-                                          34,
-                                          isPhoto:
-                                              true,
-                                        ),
-                                      ),
-                                    ],
+                          padding: const EdgeInsets.all(4),
+                          children: _activeTabMode == 'docs'
+                              ? [
+                                  _buildSizeBtn(
+                                    'بطاقة موحدة',
+                                    '8.5×5.4 سم',
+                                    () => _resizeActiveItem(
+                                      85,
+                                      54,
+                                      curved: true,
+                                    ),
+                                  ),
+
+                                  _buildSizeBtn(
+                                    'بطاقة سكن',
+                                    '8.8×5.8 سم',
+                                    () => _resizeActiveItem(
+                                      88,
+                                      58,
+                                      curved: true,
+                                    ),
+                                  ),
+
+                                  _buildSizeBtn(
+                                    'ورقة A4',
+                                    '21×29.7 سم',
+                                    () => _resizeActiveItem(
+                                      210,
+                                      297,
+                                      curved: false,
+                                    ),
+                                    clr: const Color(0xFF0F766E),
+                                  ),
+                                ]
+                              : [
+                                  _buildSizeBtn(
+                                    'معاملة',
+                                    '3.6×4.5 سم',
+                                    () => _resizeActiveItem(
+                                      36,
+                                      45,
+                                      isPhoto: true,
+                                    ),
+                                  ),
+
+                                  _buildSizeBtn(
+                                    'مصغر',
+                                    '2.5×3.4 سم',
+                                    () => _resizeActiveItem(
+                                      25,
+                                      34,
+                                      isPhoto: true,
+                                    ),
+                                  ),
+                                ],
                         ),
                       ),
 
                       if (_activeItem != null)
                         Padding(
-                          padding:
-                              const EdgeInsets.all(4),
-                          child:
-                              ElevatedButton.icon(
-                            style:
-                                ElevatedButton.styleFrom(
-                              backgroundColor:
-                                  Colors.red,
-                              foregroundColor:
-                                  Colors.white,
-                              padding:
-                                  const EdgeInsets.all(
-                                4,
-                              ),
+                          padding: const EdgeInsets.all(4.0),
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.all(4),
                             ),
                             onPressed: () {
                               setState(() {
-                                _items.remove(
-                                  _activeItem,
-                                );
+                                _items.remove(_activeItem);
                                 _activeItem = null;
                               });
                             },
@@ -717,8 +798,7 @@ class _MainScannerScreenState
                             ),
                             label: const Text(
                               'حذف',
-                              style:
-                                  TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
                               ),
                             ),
@@ -728,143 +808,98 @@ class _MainScannerScreenState
                   ),
                 ),
 
+                // ==================================================
+                // A4 PAGE
+                // ==================================================
+
                 Expanded(
                   child: Container(
-                    color:
-                        const Color(0xFF0F172A),
+                    color: const Color(0xFF0F172A),
                     child: Center(
                       child: LayoutBuilder(
-                        builder:
-                            (
-                              context,
-                              constraints,
-                            ) {
+                        builder: (
+                          context,
+                          constraints,
+                        ) {
                           final scaleX =
-                              (constraints.maxWidth -
-                                      20) /
+                              (constraints.maxWidth - 20) /
                                   pageWidthMm;
 
                           final scaleY =
-                              (constraints.maxHeight -
-                                      20) /
+                              (constraints.maxHeight - 20) /
                                   pageHeightMm;
 
-                          final scale =
-                              min(
+                          final scale = min(
                             scaleX,
                             scaleY,
                           );
 
                           return Container(
-                            width:
-                                pageWidthMm *
-                                    scale,
-                            height:
-                                pageHeightMm *
-                                    scale,
-                            decoration:
-                                BoxDecoration(
+                            width: pageWidthMm * scale,
+                            height: pageHeightMm * scale,
+                            decoration: BoxDecoration(
                               color: Colors.white,
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black
-                                      .withOpacity(
-                                    0.5,
-                                  ),
+                                  color: Colors.black.withOpacity(0.5),
                                   blurRadius: 10,
                                 ),
                               ],
                             ),
                             child: Stack(
-                              children:
-                                  _items.map(
-                                (item) {
-                                  final isActive =
-                                      _activeItem
-                                              ?.id ==
-                                          item.id;
+                              children: _items.map((item) {
+                                final isActive =
+                                    _activeItem?.id == item.id;
 
-                                  final radius =
-                                      item.hasCurvedCorners
-                                          ? BorderRadius
-                                              .circular(
-                                              3.5 *
-                                                  scale,
-                                            )
-                                          : BorderRadius
-                                              .zero;
+                                final radius =
+                                    item.hasCurvedCorners
+                                        ? BorderRadius.circular(
+                                            3.5 * scale,
+                                          )
+                                        : BorderRadius.zero;
 
-                                  return Positioned(
-                                    left:
-                                        item.xMm *
-                                            scale,
-                                    top:
-                                        item.yMm *
-                                            scale,
-                                    width:
-                                        item.widthMm *
-                                            scale,
-                                    height:
-                                        item.heightMm *
-                                            scale,
-                                    child:
-                                        GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _activeItem =
-                                              item;
-                                        });
-                                      },
-                                      onPanUpdate:
-                                          (details) {
-                                        setState(() {
-                                          item.xMm +=
-                                              details
-                                                  .delta
-                                                  .dx /
-                                                  scale;
+                                return Positioned(
+                                  left: item.xMm * scale,
+                                  top: item.yMm * scale,
+                                  width: item.widthMm * scale,
+                                  height: item.heightMm * scale,
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _activeItem = item;
+                                      });
+                                    },
+                                    onPanUpdate: (details) {
+                                      setState(() {
+                                        item.xMm +=
+                                            details.delta.dx / scale;
 
-                                          item.yMm +=
-                                              details
-                                                  .delta
-                                                  .dy /
-                                                  scale;
-                                        });
-                                      },
-                                      child:
-                                          Container(
-                                        decoration:
-                                            BoxDecoration(
-                                          borderRadius:
-                                              radius,
-                                          border:
-                                              Border.all(
-                                            color: isActive
-                                                ? Colors
-                                                    .blue
-                                                : Colors
-                                                    .transparent,
-                                            width:
-                                                isActive
-                                                    ? 2.5
-                                                    : 1,
-                                          ),
+                                        item.yMm +=
+                                            details.delta.dy / scale;
+                                      });
+                                    },
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: radius,
+                                        border: Border.all(
+                                          color: isActive
+                                              ? Colors.blue
+                                              : Colors.transparent,
+                                          width:
+                                              isActive ? 2.5 : 1.0,
                                         ),
-                                        child:
-                                            ClipRRect(
-                                          borderRadius:
-                                              radius,
-                                          child:
-                                              Image.memory(
-                                            item.cachedBytes,
-                                            fit: BoxFit.fill,
-                                          ),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: radius,
+                                        child: Image.memory(
+                                          item.cachedBytes,
+                                          fit: BoxFit.fill,
                                         ),
                                       ),
                                     ),
-                                  );
-                                },
-                              ).toList(),
+                                  ),
+                                );
+                              }).toList(),
                             ),
                           );
                         },
@@ -880,38 +915,38 @@ class _MainScannerScreenState
     );
   }
 
+  // ============================================================
+  // TOOL BUTTON
+  // ============================================================
+
   Widget _buildToolBtn(
     String label,
     bool isSelected,
     VoidCallback onTap, [
     Color? color,
   ]) {
+    final selectedColor = color ?? Colors.blue;
+
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 2,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 2.0,
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(
+          padding: const EdgeInsets.symmetric(
             horizontal: 10,
             vertical: 6,
           ),
-          decoration:
-              BoxDecoration(
+          decoration: BoxDecoration(
             color: isSelected
-                ? (color ?? Colors.blue)
-                    .withOpacity(0.3)
+                ? selectedColor.withOpacity(0.3)
                 : Colors.transparent,
-            borderRadius:
-                BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: isSelected
-                  ? (color ?? Colors.blue)
+                  ? selectedColor
                   : Colors.white30,
             ),
           ),
@@ -919,11 +954,9 @@ class _MainScannerScreenState
             label,
             style: TextStyle(
               fontSize: 11,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
               color: isSelected
-                  ? (color ??
-                      Colors.lightBlueAccent)
+                  ? selectedColor
                   : Colors.white,
             ),
           ),
@@ -932,36 +965,32 @@ class _MainScannerScreenState
     );
   }
 
+  // ============================================================
+  // SIZE BUTTON
+  // ============================================================
+
   Widget _buildSizeBtn(
     String title,
     String subtitle,
     VoidCallback onTap, {
-    Color clr =
-        const Color(0xFF0369A1),
+    Color clr = const Color(0xFF0369A1),
   }) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 3,
+      padding: const EdgeInsets.symmetric(
+        vertical: 3.0,
       ),
       child: ElevatedButton(
-        style:
-            ElevatedButton.styleFrom(
-          padding:
-              const EdgeInsets.symmetric(
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(
             vertical: 8,
           ),
-          backgroundColor:
-              clr.withOpacity(0.1),
+          backgroundColor: clr.withOpacity(0.1),
           foregroundColor: clr,
           side: BorderSide(
-            color:
-                clr.withOpacity(0.4),
+            color: clr.withOpacity(0.4),
           ),
-          shape:
-              RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
           ),
           elevation: 0,
         ),
@@ -972,8 +1001,7 @@ class _MainScannerScreenState
               title,
               style: TextStyle(
                 fontSize: 10,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
                 color: clr,
               ),
             ),
@@ -981,8 +1009,7 @@ class _MainScannerScreenState
               subtitle,
               style: TextStyle(
                 fontSize: 8,
-                color:
-                    clr.withOpacity(0.8),
+                color: clr.withOpacity(0.8),
               ),
             ),
           ],
@@ -992,9 +1019,9 @@ class _MainScannerScreenState
   }
 }
 
-/// ===============================================================
-/// MANUAL CROP SCREEN
-/// ===============================================================
+// ==================================================================
+// MANUAL CROP SCREEN
+// ==================================================================
 
 class CropScreen extends StatefulWidget {
   final img.Image image;
@@ -1005,12 +1032,10 @@ class CropScreen extends StatefulWidget {
   });
 
   @override
-  State<CropScreen> createState() =>
-      _CropScreenState();
+  State<CropScreen> createState() => _CropScreenState();
 }
 
-class _CropScreenState
-    extends State<CropScreen> {
+class _CropScreenState extends State<CropScreen> {
   double _x1 = 0.05;
   double _y1 = 0.05;
 
@@ -1023,8 +1048,7 @@ class _CropScreenState
   double _x4 = 0.05;
   double _y4 = 0.95;
 
-  EnhanceMode _filter =
-      EnhanceMode.soft;
+  EnhanceMode _filter = EnhanceMode.soft;
 
   late Uint8List _displayBytes;
 
@@ -1032,8 +1056,7 @@ class _CropScreenState
   void initState() {
     super.initState();
 
-    _displayBytes =
-        Uint8List.fromList(
+    _displayBytes = Uint8List.fromList(
       img.encodeJpg(
         widget.image,
         quality: 92,
@@ -1042,8 +1065,7 @@ class _CropScreenState
   }
 
   void _applyCrop() {
-    var cropped =
-        ManualCrop.cropPerspective(
+    var cropped = ManualCrop.cropPerspective(
       widget.image,
       _x1,
       _y1,
@@ -1055,8 +1077,7 @@ class _CropScreenState
       _y4,
     );
 
-    cropped =
-        ImageEnhancer.apply(
+    cropped = ImageEnhancer.apply(
       cropped,
       _filter,
     );
@@ -1068,56 +1089,60 @@ class _CropScreenState
   }
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          Colors.black,
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1E293B),
+        backgroundColor: const Color(0xFF1E293B),
+
         leading: IconButton(
           icon: const Icon(
             Icons.close,
             color: Colors.white,
           ),
-          onPressed: () =>
-              Navigator.pop(context),
+          onPressed: () {
+            Navigator.pop(context);
+          },
         ),
+
         title: Row(
           children: [
             _filterChip(
               'أصلي',
-              _filter ==
-                  EnhanceMode.none,
-              () => setState(
-                () => _filter =
-                    EnhanceMode.none,
-              ),
+              _filter == EnhanceMode.none,
+              () {
+                setState(() {
+                  _filter = EnhanceMode.none;
+                });
+              },
             ),
+
             const SizedBox(width: 4),
+
             _filterChip(
               'تحسين ✨',
-              _filter ==
-                  EnhanceMode.soft,
-              () => setState(
-                () => _filter =
-                    EnhanceMode.soft,
-              ),
+              _filter == EnhanceMode.soft,
+              () {
+                setState(() {
+                  _filter = EnhanceMode.soft;
+                });
+              },
             ),
+
             const SizedBox(width: 4),
+
             _filterChip(
               'أبيض وأسود',
-              _filter ==
-                  EnhanceMode.bw,
-              () => setState(
-                () => _filter =
-                    EnhanceMode.bw,
-              ),
+              _filter == EnhanceMode.bw,
+              () {
+                setState(() {
+                  _filter = EnhanceMode.bw;
+                });
+              },
             ),
           ],
         ),
+
         actions: [
           IconButton(
             icon: const Icon(
@@ -1128,43 +1153,28 @@ class _CropScreenState
           ),
         ],
       ),
+
       body: LayoutBuilder(
-        builder:
-            (
-              context,
-              constraints,
-            ) {
-          final cw =
-              constraints.maxWidth;
+        builder: (
+          context,
+          constraints,
+        ) {
+          final cw = constraints.maxWidth;
+          final ch = constraints.maxHeight;
 
-          final ch =
-              constraints.maxHeight;
+          final iw = widget.image.width.toDouble();
+          final ih = widget.image.height.toDouble();
 
-          final iw =
-              widget.image.width
-                  .toDouble();
-
-          final ih =
-              widget.image.height
-                  .toDouble();
-
-          final scale =
-              min(
+          final scale = min(
             cw / iw,
             ch / ih,
           );
 
-          final imgW =
-              iw * scale;
+          final imgW = iw * scale;
+          final imgH = ih * scale;
 
-          final imgH =
-              ih * scale;
-
-          final imgL =
-              (cw - imgW) / 2;
-
-          final imgT =
-              (ch - imgH) / 2;
+          final imgL = (cw - imgW) / 2;
+          final imgT = (ch - imgH) / 2;
 
           return Stack(
             children: [
@@ -1252,44 +1262,36 @@ class _CropScreenState
     double it,
     double iw,
     double ih,
-    void Function(
-      double,
-      double,
-    ) onMove,
+    void Function(double, double) onMove,
   ) {
     return Positioned(
-      left:
-          il + rx * iw - 20,
-      top:
-          it + ry * ih - 20,
+      left: il + rx * iw - 20,
+      top: it + ry * ih - 20,
       child: GestureDetector(
         onPanUpdate: (d) {
           onMove(
             (
-              (il +
-                      rx * iw +
-                      d.delta.dx -
-                      il) /
-                  iw
-            ).clamp(0.0, 1.0),
+              il +
+                  rx * iw +
+                  d.delta.dx -
+                  il
+            ) /
+                iw,
             (
-              (it +
-                      ry * ih +
-                      d.delta.dy -
-                      it) /
-                  ih
-            ).clamp(0.0, 1.0),
+              it +
+                  ry * ih +
+                  d.delta.dy -
+                  it
+            ) /
+                ih,
           );
         },
         child: Container(
           width: 40,
           height: 40,
-          decoration:
-              BoxDecoration(
-            color: Colors.blue
-                .withOpacity(0.8),
-            shape:
-                BoxShape.circle,
+          decoration: BoxDecoration(
+            color: Colors.blue.withOpacity(0.8),
+            shape: BoxShape.circle,
             border: Border.all(
               color: Colors.white,
               width: 2,
@@ -1313,23 +1315,19 @@ class _CropScreenState
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(
+        padding: const EdgeInsets.symmetric(
           horizontal: 8,
           vertical: 4,
         ),
-        decoration:
-            BoxDecoration(
+        decoration: BoxDecoration(
           color: isSelected
               ? Colors.blue
               : Colors.black45,
-          borderRadius:
-              BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
           label,
-          style:
-              const TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 10,
           ),
