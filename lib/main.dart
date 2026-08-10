@@ -7,6 +7,8 @@ import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 import 'crop_engine.dart';
 
@@ -98,79 +100,126 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  /// فتح ماسح Google ML Kit الرسمي الذكي
+  /// طلب الأذونات برمجياً أثناء التشغيل
+  Future<bool> _checkAndRequestPermissions() async {
+    var cameraStatus = await Permission.camera.status;
+    if (!cameraStatus.isGranted) {
+      cameraStatus = await Permission.camera.request();
+    }
+    
+    if (cameraStatus.isDenied || cameraStatus.isPermanentlyDenied) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('يرجى منح إذن الكاميرا لتشغيل الماسح الضوئي'),
+            action: SnackBarAction(
+              label: 'الإعدادات',
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /// مسح جوجل الذكي مع تحويل آلي للكاميرا العادية
   void _googleScan() async {
+    bool hasPermission = await _checkAndRequestPermissions();
+    if (!hasPermission) return;
+
     try {
-      final paths = await GoogleScanner.scan();
-      if (paths == null || paths.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تم إلغاء المسح'), backgroundColor: Colors.grey, duration: Duration(seconds: 1)),
-          );
+      final options = DocumentScannerOptions(
+        documentFormat: DocumentScannerFormat.jpeg,
+        mode: ScannerMode.full,
+        pageLimit: 10,
+        isGalleryImportAllowed: true,
+      );
+      final scanner = DocumentScanner(options: options);
+      final result = await scanner.scanDocument();
+
+      if (result.images.isNotEmpty) {
+        for (int i = 0; i < result.images.length; i++) {
+          final raw = await File(result.images[i]).readAsBytes();
+          final decoded = ImageUtils.decodeBytes(raw);
+          if (decoded == null) continue;
+          final encoded = Uint8List.fromList(ImageUtils.encodeJpg(decoded));
+          if (!mounted) return;
+          setState(() {
+            final item = DocumentItem(
+              id: 'gs_${DateTime.now().millisecondsSinceEpoch}_$i',
+              image: decoded,
+              cachedBytes: encoded,
+              widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
+              heightMm: _activeTabMode == 'photos' ? 45.0 : (decoded.height.toDouble() / decoded.width.toDouble() * 85.0),
+              xMm: pageMarginMm + (_items.length * 4.0),
+              yMm: pageMarginMm + (_items.length * 4.0),
+              isPhotoMode: _activeTabMode == 'photos',
+              hasCurvedCorners: _activeTabMode == 'docs',
+            );
+            _items.add(item);
+            _activeItem = item;
+          });
         }
         return;
       }
-      for (int i = 0; i < paths.length; i++) {
-        final raw = await File(paths[i]).readAsBytes();
-        final decoded = ImageUtils.decodeBytes(raw);
-        if (decoded == null) continue;
-        final encoded = Uint8List.fromList(ImageUtils.encodeJpg(decoded));
-        if (!mounted) return;
-        setState(() {
-          final item = DocumentItem(
-            id: 'gs_${DateTime.now().millisecondsSinceEpoch}_$i',
-            image: decoded,
-            cachedBytes: encoded,
-            widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
-            heightMm: _activeTabMode == 'photos' ? 45.0 : (decoded.height.toDouble() / decoded.width.toDouble() * 85.0),
-            xMm: pageMarginMm + (_items.length * 4.0),
-            yMm: pageMarginMm + (_items.length * 4.0),
-            isPhotoMode: _activeTabMode == 'photos',
-            hasCurvedCorners: _activeTabMode == 'docs',
-          );
-          _items.add(item);
-          _activeItem = item;
-        });
+    } catch (e) {
+      debugPrint('Google Scanner Fallback: $e');
+    }
+
+    _addNewImages(ImageSource.camera);
+  }
+
+  void _addNewImages(ImageSource source) async {
+    if (source == ImageSource.camera) {
+      bool hasPermission = await _checkAndRequestPermissions();
+      if (!hasPermission) return;
+    }
+
+    try {
+      if (source == ImageSource.camera) {
+        final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+        if (photo != null) {
+          final bytes = await File(photo.path).readAsBytes();
+          _processAndAddImage(bytes);
+        }
+      } else {
+        final List<XFile> files = await _picker.pickMultiImage();
+        for (var file in files) {
+          final bytes = await File(file.path).readAsBytes();
+          _processAndAddImage(bytes);
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في تشغيل ماسح جوجل: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('خطأ في التقاط الصورة: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  void _addNewImages(ImageSource source) async {
-    if (source == ImageSource.camera) {
-      _googleScan();
-      return;
-    }
-
-    final files = await _picker.pickMultiImage();
-    for (int i = 0; i < files.length; i++) {
-      final bytes = await File(files[i].path).readAsBytes();
-      final decodedImg = ImageUtils.decodeBytes(bytes);
-
-      if (decodedImg != null) {
-        final encodedBytes = Uint8List.fromList(ImageUtils.encodeJpg(decodedImg));
-        if (!mounted) return;
-        setState(() {
-          final newItem = DocumentItem(
-            id: '${DateTime.now().millisecondsSinceEpoch}_$i',
-            image: decodedImg,
-            cachedBytes: encodedBytes,
-            widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
-            heightMm: _activeTabMode == 'photos' ? 45.0 : (decodedImg.height.toDouble() / decodedImg.width.toDouble() * 85.0),
-            xMm: pageMarginMm + (_items.length * 4.0),
-            yMm: pageMarginMm + (_items.length * 4.0),
-            isPhotoMode: _activeTabMode == 'photos',
-            hasCurvedCorners: _activeTabMode == 'docs',
-          );
-          _items.add(newItem);
-          _activeItem = newItem;
-        });
-      }
+  void _processAndAddImage(Uint8List bytes) {
+    final decodedImg = ImageUtils.decodeBytes(bytes);
+    if (decodedImg != null) {
+      final encodedBytes = Uint8List.fromList(ImageUtils.encodeJpg(decodedImg));
+      if (!mounted) return;
+      setState(() {
+        final newItem = DocumentItem(
+          id: '${DateTime.now().millisecondsSinceEpoch}',
+          image: decodedImg,
+          cachedBytes: encodedBytes,
+          widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
+          heightMm: _activeTabMode == 'photos' ? 45.0 : (decodedImg.height.toDouble() / decodedImg.width.toDouble() * 85.0),
+          xMm: pageMarginMm + (_items.length * 4.0),
+          yMm: pageMarginMm + (_items.length * 4.0),
+          isPhotoMode: _activeTabMode == 'photos',
+          hasCurvedCorners: _activeTabMode == 'docs',
+        );
+        _items.add(newItem);
+        _activeItem = newItem;
+      });
     }
   }
 
@@ -281,12 +330,12 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
-        title: const Text('مكتب علاء الحديدي - الماسح الذكي والطباعة', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        title: const Text('مكتب علاء الحديدي - الماسح والطباعة', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF0284C7),
         foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.print, size: 20), tooltip: 'طباعة PDF', onPressed: _exportAndPrint),
-          IconButton(icon: const Icon(Icons.document_scanner, size: 22, color: Color(0xFF4ADE80)), tooltip: 'مسح Google الذكي', onPressed: _googleScan),
+          IconButton(icon: const Icon(Icons.document_scanner, size: 22, color: Color(0xFF4ADE80)), tooltip: 'مسح ذكي', onPressed: _googleScan),
           IconButton(icon: const Icon(Icons.add_a_photo, size: 20), tooltip: 'كاميرا', onPressed: () => _addNewImages(ImageSource.camera)),
           IconButton(icon: const Icon(Icons.photo_library, size: 20), tooltip: 'معرض', onPressed: () => _addNewImages(ImageSource.gallery)),
         ],
