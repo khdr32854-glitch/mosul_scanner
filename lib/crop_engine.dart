@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
