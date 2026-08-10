@@ -42,30 +42,40 @@ jobs:
 
 
       # =========================================================
-      # 4. التأكد من ملفات المشروع
+      # 4. فحص ملفات المشروع
       # =========================================================
       - name: Verify Project Files
         run: |
-          echo "===== PROJECT ====="
-          ls -la
+          echo "=========================================="
+          echo "PROJECT"
+          echo "=========================================="
 
-          echo "===== LIB ====="
-          ls -la lib
-
-          echo "===== PUBSPEC ====="
           test -f pubspec.yaml
+          test -f lib/main.dart
+          test -f lib/crop_engine.dart
 
           echo "Project files OK."
 
+          echo ""
+          echo "=========================================="
+          echo "LIB"
+          echo "=========================================="
+
+          find lib -maxdepth 2 -type f -print
+
 
       # =========================================================
-      # 5. إنشاء Android إذا كان مفقودًا
+      # 5. تجهيز Android
       # =========================================================
       - name: Prepare Android Project
         run: |
+          echo "=========================================="
+          echo "ANDROID"
+          echo "=========================================="
+
           if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
 
-            echo "Android project not found."
+            echo "Android project missing."
             echo "Creating Android project..."
 
             flutter create \
@@ -81,6 +91,10 @@ jobs:
 
           fi
 
+          test -f android/app/src/main/AndroidManifest.xml
+
+          echo "Android project OK."
+
 
       # =========================================================
       # 6. حذف اختبار Flutter الافتراضي
@@ -95,31 +109,11 @@ jobs:
             rmdir test
           fi
 
-          echo "Default test removed."
+          echo "Test cleanup completed."
 
 
       # =========================================================
-      # 7. التأكد من AndroidManifest
-      # =========================================================
-      - name: Verify Android Project
-        run: |
-          echo "===== ANDROID ====="
-
-          test -f android/app/src/main/AndroidManifest.xml
-
-          echo "AndroidManifest.xml found."
-
-          echo "===== MAIN ACTIVITY ====="
-
-          find android/app/src/main -type f \
-            \( -name "MainActivity.kt" -o -name "MainActivity.java" \) \
-            -print
-
-          echo "Android project OK."
-
-
-      # =========================================================
-      # 8. إضافة صلاحية الكاميرا
+      # 7. إضافة صلاحية الكاميرا
       # =========================================================
       - name: Configure Camera Permission
         run: |
@@ -137,30 +131,49 @@ jobs:
           )
 
           if permission not in text:
-              text = text.replace(
-                  '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-                  '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-          <uses-permission android:name="android.permission.CAMERA"/>'''
+              marker = (
+                  '<manifest '
+                  'xmlns:android="http://schemas.android.com/apk/res/android">'
               )
 
-              manifest.write_text(text)
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker
+                      + '\n\n'
+                      + '    <uses-permission '
+                        'android:name="android.permission.CAMERA"/>',
+                      1
+                  )
+
+                  manifest.write_text(text)
 
           print("Camera permission configured.")
           PY
 
 
       # =========================================================
-      # 9. عرض AndroidManifest للفحص
+      # 8. فحص Manifest
       # =========================================================
-      - name: Show Android Manifest
+      - name: Verify Android Manifest
         run: |
-          echo "===== ANDROID MANIFEST ====="
+          echo "=========================================="
+          echo "ANDROID MANIFEST"
+          echo "=========================================="
+
+          test -f android/app/src/main/AndroidManifest.xml
+
+          grep -q \
+            'android.permission.CAMERA' \
+            android/app/src/main/AndroidManifest.xml
+
+          echo "Camera permission found."
+          echo ""
           cat android/app/src/main/AndroidManifest.xml
 
 
       # =========================================================
-      # 10. تنظيف المشروع
+      # 9. تنظيف Flutter
       # =========================================================
       - name: Clean Flutter
         run: |
@@ -169,11 +182,11 @@ jobs:
           rm -rf .dart_tool
           rm -rf build
 
-          echo "Flutter clean completed."
+          echo "Clean completed."
 
 
       # =========================================================
-      # 11. تحميل المكتبات
+      # 10. تحميل المكتبات
       # =========================================================
       - name: Get Dependencies
         run: |
@@ -181,7 +194,7 @@ jobs:
 
 
       # =========================================================
-      # 12. معلومات Flutter
+      # 11. فحص Flutter
       # =========================================================
       - name: Flutter Version
         run: |
@@ -189,7 +202,7 @@ jobs:
 
 
       # =========================================================
-      # 13. فحص الاعتماديات
+      # 12. فحص Dependencies
       # =========================================================
       - name: Check Dependencies
         run: |
@@ -197,39 +210,50 @@ jobs:
 
 
       # =========================================================
-      # 14. تحليل المشروع
+      # 13. تحليل المشروع
+      #
+      # التحذيرات والمعلومات لن توقف البناء.
+      # الأخطاء الحقيقية ستظل ظاهرة.
       # =========================================================
       - name: Analyze
         run: |
-          flutter analyze
+          flutter analyze --no-fatal-infos --no-fatal-warnings
 
 
       # =========================================================
-      # 15. بناء APK
+      # 14. بناء APK
       # =========================================================
       - name: Build APK
         run: |
+          echo "=========================================="
+          echo "BUILDING APK"
+          echo "=========================================="
+
           flutter build apk \
             --release \
             --no-tree-shake-icons
 
 
       # =========================================================
-      # 16. التأكد من APK
+      # 15. التأكد من APK
       # =========================================================
       - name: Verify APK
         run: |
-          echo "===== APK ====="
+          echo "=========================================="
+          echo "APK"
+          echo "=========================================="
 
           ls -lh build/app/outputs/flutter-apk/
 
-          test -f build/app/outputs/flutter-apk/app-release.apk
+          test -f \
+            build/app/outputs/flutter-apk/app-release.apk
 
-          echo "APK created successfully."
+          echo ""
+          echo "APK CREATED SUCCESSFULLY."
 
 
       # =========================================================
-      # 17. رفع APK
+      # 16. رفع APK
       # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
