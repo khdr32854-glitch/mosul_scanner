@@ -243,7 +243,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  /// فتح ماسح جوجل الذكي للتعرف والقص التلقائي
   Future<void> _openGoogleScanner() async {
     if (_isScanning) return;
 
@@ -336,7 +335,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       return;
     }
 
-    // الانتقال لشاشة التعديل والقص اليدوي والفلترة الدقيقة
     final result = await Navigator.push<img.Image>(
       context,
       MaterialPageRoute(
@@ -367,7 +365,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
     setState(() {
       final photoMode = isPhoto || _activeTabMode == 'photos';
-      final width = photoMode ? 36.0 : 85.0; // افتراضي بطاقة موحدة 8.5 سم
+      final width = photoMode ? 36.0 : 85.0;
       final ratio = decodedImage.height / decodedImage.width;
       final height = photoMode ? 45.0 : width * ratio;
       final offset = _items.length * 4.0;
@@ -575,9 +573,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ),
                   )
                 : const Icon(Icons.document_scanner_outlined),
-            onPressed: _isScanning
-                ? null
-                : () => _openGoogleScanner(),
+            onPressed: _isScanning ? null : _openGoogleScanner,
           ),
           IconButton(
             tooltip: 'استيراد من المعرض',
@@ -940,7 +936,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
 class CropScreen extends StatefulWidget {
   final img.Image image;
-  const CropScreen({super.key, requiredthis.image});
+  const CropScreen({super.key, required this.image});
 
   @override
   State<CropScreen> createState() => _CropScreenState();
@@ -1111,7 +1107,7 @@ class _CropScreenState extends State<CropScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF0284C7).withOpacity(0.9),
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
+            BoxBorder: Border.all(color: Colors.white, width: 2), // Fixed invalid property syntax
             boxShadow: const [
               BoxShadow(color: Colors.black45, blurRadius: 4),
             ],
