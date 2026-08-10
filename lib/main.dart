@@ -8,7 +8,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 import 'crop_engine.dart';
 
@@ -122,53 +121,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       return false;
     }
     return true;
-  }
-
-  /// مسح جوجل الذكي مع تحويل آلي للكاميرا العادية
-  void _googleScan() async {
-    bool hasPermission = await _checkAndRequestPermissions();
-    if (!hasPermission) return;
-
-    try {
-      final options = DocumentScannerOptions(
-        documentFormat: DocumentScannerFormat.jpeg,
-        mode: ScannerMode.full,
-        pageLimit: 10,
-        isGalleryImportAllowed: true,
-      );
-      final scanner = DocumentScanner(options: options);
-      final result = await scanner.scanDocument();
-
-      if (result.images.isNotEmpty) {
-        for (int i = 0; i < result.images.length; i++) {
-          final raw = await File(result.images[i]).readAsBytes();
-          final decoded = ImageUtils.decodeBytes(raw);
-          if (decoded == null) continue;
-          final encoded = Uint8List.fromList(ImageUtils.encodeJpg(decoded));
-          if (!mounted) return;
-          setState(() {
-            final item = DocumentItem(
-              id: 'gs_${DateTime.now().millisecondsSinceEpoch}_$i',
-              image: decoded,
-              cachedBytes: encoded,
-              widthMm: _activeTabMode == 'photos' ? 36.0 : 85.0,
-              heightMm: _activeTabMode == 'photos' ? 45.0 : (decoded.height.toDouble() / decoded.width.toDouble() * 85.0),
-              xMm: pageMarginMm + (_items.length * 4.0),
-              yMm: pageMarginMm + (_items.length * 4.0),
-              isPhotoMode: _activeTabMode == 'photos',
-              hasCurvedCorners: _activeTabMode == 'docs',
-            );
-            _items.add(item);
-            _activeItem = item;
-          });
-        }
-        return;
-      }
-    } catch (e) {
-      debugPrint('Google Scanner Fallback: $e');
-    }
-
-    _addNewImages(ImageSource.camera);
   }
 
   void _addNewImages(ImageSource source) async {
@@ -335,7 +287,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.print, size: 20), tooltip: 'طباعة PDF', onPressed: _exportAndPrint),
-          IconButton(icon: const Icon(Icons.document_scanner, size: 22, color: Color(0xFF4ADE80)), tooltip: 'مسح ذكي', onPressed: _googleScan),
           IconButton(icon: const Icon(Icons.add_a_photo, size: 20), tooltip: 'كاميرا', onPressed: () => _addNewImages(ImageSource.camera)),
           IconButton(icon: const Icon(Icons.photo_library, size: 20), tooltip: 'معرض', onPressed: () => _addNewImages(ImageSource.gallery)),
         ],
