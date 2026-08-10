@@ -35,6 +35,7 @@ class GoogleScanner {
       final result = await scanner.scanDocument();
       return result.images;
     } catch (e) {
+      debugPrint('Google Scanner Error: $e');
       return null;
     } finally {
       try {
@@ -78,9 +79,9 @@ class ImageEnhancer {
         try {
           return img.adjustColor(
             image,
-            contrast: 1.12,
-            brightness: 1.04,
-            saturation: 1.03,
+            contrast: 1.15,
+            brightness: 1.05,
+            saturation: 1.02,
           );
         } catch (_) {
           return image;
@@ -88,7 +89,7 @@ class ImageEnhancer {
       case EnhanceMode.bw:
         try {
           final gray = img.grayscale(image);
-          return img.adjustColor(gray, contrast: 1.22, brightness: 1.03);
+          return img.adjustColor(gray, contrast: 1.25, brightness: 1.04);
         } catch (_) {
           return image;
         }
@@ -242,6 +243,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
+  /// فتح ماسح جوجل الذكي للتعرف والقص التلقائي
   Future<void> _openGoogleScanner() async {
     if (_isScanning) return;
 
@@ -255,6 +257,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         allowGallery: false,
       );
 
+      if (!mounted) return;
+
       if (paths != null && paths.isNotEmpty) {
         for (final path in paths) {
           final file = File(path);
@@ -262,21 +266,22 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             final bytes = await file.readAsBytes();
             final decoded = img.decodeImage(bytes);
             if (decoded != null) {
-              await _processImageWithCropScreen(decoded, isPhoto: false);
+              _addDecodedImage(decoded, isPhoto: false, curved: true);
             }
           }
         }
+        _showMessage('تم الاستيراد والقص التلقائي بنجاح');
         return;
       }
-    } catch (_) {} finally {
+    } catch (e) {
+      debugPrint('Scanner error: $e');
+    } finally {
       if (mounted) {
         setState(() {
           _isScanning = false;
         });
       }
     }
-
-    await _addNewImages(ImageSource.gallery);
   }
 
   Future<void> _addNewImages(ImageSource source) async {
@@ -295,7 +300,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final bytes = await File(photo.path).readAsBytes();
         final decoded = img.decodeImage(bytes);
         if (decoded != null) {
-          await _processImageWithCropScreen(
+          _processImageWithCropScreen(
             decoded,
             isPhoto: _activeTabMode == 'photos',
           );
@@ -308,7 +313,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final bytes = await File(file.path).readAsBytes();
         final decoded = img.decodeImage(bytes);
         if (decoded != null) {
-          await _processImageWithCropScreen(
+          _processImageWithCropScreen(
             decoded,
             isPhoto: _activeTabMode == 'photos',
           );
@@ -316,7 +321,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showMessage('خطأ في جلب الصورة: $e', error: true);
+      _showMessage('خطأ في جلب الصور: $e', error: true);
     }
   }
 
@@ -331,6 +336,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       return;
     }
 
+    // الانتقال لشاشة التعديل والقص اليدوي والفلترة الدقيقة
     final result = await Navigator.push<img.Image>(
       context,
       MaterialPageRoute(
@@ -361,7 +367,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
     setState(() {
       final photoMode = isPhoto || _activeTabMode == 'photos';
-      final width = photoMode ? 36.0 : 85.0;
+      final width = photoMode ? 36.0 : 85.0; // افتراضي بطاقة موحدة 8.5 سم
       final ratio = decodedImage.height / decodedImage.width;
       final height = photoMode ? 45.0 : width * ratio;
       final offset = _items.length * 4.0;
@@ -558,7 +564,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip: 'ماسح المستندات الذكي',
+            tooltip: 'ماسح جوجل التلقائي',
             icon: _isScanning
                 ? const SizedBox(
                     width: 18,
@@ -571,7 +577,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 : const Icon(Icons.document_scanner_outlined),
             onPressed: _isScanning
                 ? null
-                : () => _addNewImages(ImageSource.camera),
+                : () => _openGoogleScanner(),
           ),
           IconButton(
             tooltip: 'استيراد من المعرض',
@@ -582,7 +588,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       ),
       body: Column(
         children: [
-          // شريط الأدوات العلوي الاحترافي (بدون رموز طفولية)
           Container(
             height: 48,
             color: const Color(0xFF111827),
@@ -604,7 +609,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 ),
                 const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
                 _buildActionBtn(
-                  'قص الأطراف',
+                  'قص الأطراف والفلترة',
                   Icons.crop,
                   _manualCropActiveItem,
                   const Color(0xFF0EA5E9),
@@ -633,7 +638,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           Expanded(
             child: Row(
               children: [
-                // اللوحة الجانبية القياسية
                 Container(
                   width: 110,
                   color: const Color(0xFF1E293B),
@@ -708,7 +712,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             width: double.infinity,
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFDC2626), // سلة مهملات فخمة بلون أحمر غامق
+                                backgroundColor: const Color(0xFFDC2626),
                                 foregroundColor: Colors.white,
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -731,7 +735,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ],
                   ),
                 ),
-                // مساحة العمل (Canvas)
                 Expanded(
                   child: Container(
                     color: const Color(0xFF090D16),
@@ -937,7 +940,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
 class CropScreen extends StatefulWidget {
   final img.Image image;
-  const CropScreen({super.key, required this.image});
+  const CropScreen({super.key, requiredthis.image});
 
   @override
   State<CropScreen> createState() => _CropScreenState();
@@ -954,8 +957,13 @@ class _CropScreenState extends State<CropScreen> {
   @override
   void initState() {
     super.initState();
+    _updateDisplayBytes();
+  }
+
+  void _updateDisplayBytes() {
+    final processed = ImageEnhancer.apply(widget.image, _filter);
     _displayBytes = Uint8List.fromList(
-      img.encodeJpg(widget.image, quality: 92),
+      img.encodeJpg(processed, quality: 92),
     );
   }
 
@@ -989,23 +997,26 @@ class _CropScreenState extends State<CropScreen> {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _filterChip(
-                'أصلي',
-                _filter == EnhanceMode.none,
-                () => setState(() => _filter = EnhanceMode.none),
-              ),
+              _filterChip('أصلي', _filter == EnhanceMode.none, () {
+                setState(() {
+                  _filter = EnhanceMode.none;
+                  _updateDisplayBytes();
+                });
+              }),
               const SizedBox(width: 4),
-              _filterChip(
-                'تحسين ذكي',
-                _filter == EnhanceMode.soft,
-                () => setState(() => _filter = EnhanceMode.soft),
-              ),
+              _filterChip('تحسين ذكي', _filter == EnhanceMode.soft, () {
+                setState(() {
+                  _filter = EnhanceMode.soft;
+                  _updateDisplayBytes();
+                });
+              }),
               const SizedBox(width: 4),
-              _filterChip(
-                'أبيض وأسود رسمي',
-                _filter == EnhanceMode.bw,
-                () => setState(() => _filter = EnhanceMode.bw),
-              ),
+              _filterChip('أبيض وأسود رسمي', _filter == EnhanceMode.bw, () {
+                setState(() {
+                  _filter = EnhanceMode.bw;
+                  _updateDisplayBytes();
+                });
+              }),
             ],
           ),
         ),
