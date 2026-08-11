@@ -6,39 +6,29 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 import 'crop_engine.dart';
 
 class GoogleScanner {
   static Future<List<String>?> scan() async {
     final options = DocumentScannerOptions(
-      documentFormats: {
-        DocumentFormat.jpeg,
-        DocumentFormat.pdf,
-      },
+      documentFormats: {DocumentFormat.jpeg, DocumentFormat.pdf},
       mode: ScannerMode.full,
       pageLimit: 2,
       isGalleryImport: false,
     );
 
-    final scanner = DocumentScanner(
-      options: options,
-    );
+    final scanner = DocumentScanner(options: options);
 
     try {
-      final result =
-          await scanner.scanDocument();
-
+      final result = await scanner.scanDocument();
       return result.images;
     } catch (e) {
-      debugPrint(
-        'Google Document Scanner Error: $e',
-      );
-
+      debugPrint('Google Document Scanner Error: $e');
       return null;
     } finally {
       try {
@@ -50,21 +40,14 @@ class GoogleScanner {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  runApp(
-    const MosulScannerApp(),
-  );
+  runApp(const MosulScannerApp());
 }
 
 class MosulScannerApp extends StatelessWidget {
-  const MosulScannerApp({
-    super.key,
-  });
+  const MosulScannerApp({super.key});
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Mosul Scanner Pro',
       debugShowCheckedModeBanner: false,
@@ -72,25 +55,19 @@ class MosulScannerApp extends StatelessWidget {
         useMaterial3: true,
         colorSchemeSeed: Colors.blueGrey,
       ),
-      home:
-          const MainScannerScreen(),
+      home: const MainScannerScreen(),
     );
   }
 }
 
 class DocumentItem {
   final String id;
-
   Uint8List cachedBytes;
-
   double widthMm;
   double heightMm;
-
   double xMm;
   double yMm;
-
   int rotationAngle;
-
   bool isPhotoMode;
   bool hasCurvedCorners;
 
@@ -107,60 +84,39 @@ class DocumentItem {
   });
 
   void applyRotation() {
-    final angle =
-        ((rotationAngle % 360) + 360) % 360;
+    final angle = ((rotationAngle % 360) + 360) % 360;
 
-    if (angle == 0) {
-      return;
-    }
+    if (angle == 0) return;
 
-    final mat =
-        ImageUtils.decodeBytes(
-      cachedBytes,
-    );
+    final mat = ImageUtils.decodeBytes(cachedBytes);
 
     if (mat != null) {
       int code = -1;
 
       if (angle == 90) {
-        code =
-            cv.ROTATE_90_CLOCKWISE;
+        code = cv.ROTATE_90_CLOCKWISE;
       } else if (angle == 180) {
         code = cv.ROTATE_180;
       } else if (angle == 270) {
-        code =
-            cv.ROTATE_90_COUNTERCLOCKWISE;
+        code = cv.ROTATE_90_COUNTERCLOCKWISE;
       }
 
       if (code != -1) {
         try {
-          final rotated =
-              cv.rotate(
-            mat,
-            code,
-          );
-
-          final bytes =
-              ImageUtils.encodeJpg(
-            rotated,
-            quality: 95,
-          );
+          final rotated = cv.rotate(mat, code);
+          final bytes = ImageUtils.encodeJpg(rotated, quality: 95);
 
           if (bytes.isNotEmpty) {
             cachedBytes = bytes;
           }
         } catch (e) {
-          debugPrint(
-            'Rotation error: $e',
-          );
+          debugPrint('Rotation error: $e');
         }
       }
     }
 
-    if (angle == 90 ||
-        angle == 270) {
+    if (angle == 90 || angle == 270) {
       final temp = widthMm;
-
       widthMm = heightMm;
       heightMm = temp;
     }
@@ -168,104 +124,72 @@ class DocumentItem {
     rotationAngle = 0;
   }
 
-  void replaceImageBytes(
-    Uint8List newBytes,
-  ) {
+  void replaceImageBytes(Uint8List newBytes) {
+    if (newBytes.isEmpty) return;
+
     cachedBytes = newBytes;
     rotationAngle = 0;
 
-    final mat =
-        ImageUtils.decodeBytes(
-      newBytes,
-    );
+    final mat = ImageUtils.decodeBytes(newBytes);
 
-    if (mat != null &&
-        mat.cols > 0) {
-      heightMm =
-          (mat.rows / mat.cols) *
-              widthMm;
+    if (mat != null && mat.cols > 0) {
+      heightMm = (mat.rows / mat.cols) * widthMm;
     }
   }
 }
 
-class MainScannerScreen
-    extends StatefulWidget {
-  const MainScannerScreen({
-    super.key,
-  });
+class MainScannerScreen extends StatefulWidget {
+  const MainScannerScreen({super.key});
 
   @override
-  State<MainScannerScreen> createState() =>
-      _MainScannerScreenState();
+  State<MainScannerScreen> createState() => _MainScannerScreenState();
 }
 
-class _MainScannerScreenState
-    extends State<MainScannerScreen> {
+class _MainScannerScreenState extends State<MainScannerScreen> {
   final List<DocumentItem> _items = [];
+  final ImagePicker _picker = ImagePicker();
 
   DocumentItem? _activeItem;
 
-  final ImagePicker _picker =
-      ImagePicker();
-
   String _activeTabMode = 'docs';
-
   bool _isScanning = false;
 
-  static const double pageWidthMm =
-      210.0;
+  static const double pageWidthMm = 210.0;
+  static const double pageHeightMm = 297.0;
+  static const double pageMarginMm = 10.0;
 
-  static const double pageHeightMm =
-      297.0;
+  Future<void> _openGoogleScanner() async {
+    if (_isScanning) return;
 
-  static const double pageMarginMm =
-      10.0;
-
-  Future<void>
-      _openGoogleScanner() async {
-    if (_isScanning) {
-      return;
-    }
-
-    setState(
-      () => _isScanning = true,
-    );
+    setState(() => _isScanning = true);
 
     try {
-      final paths =
-          await GoogleScanner.scan();
+      final paths = await GoogleScanner.scan();
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
-      if (paths != null &&
-          paths.isNotEmpty) {
+      if (paths != null && paths.isNotEmpty) {
         int added = 0;
 
         for (final path in paths) {
           final file = File(path);
 
-          if (!await file.exists()) {
-            continue;
+          if (!await file.exists()) continue;
+
+          final bytes = await file.readAsBytes();
+
+          if (bytes.isNotEmpty) {
+            _addRawBytes(
+              bytes,
+              isPhoto: false,
+              curved: false,
+            );
+            added++;
           }
-
-          final bytes =
-              await file.readAsBytes();
-
-          _addRawBytes(
-            bytes,
-            isPhoto: false,
-            curved: false,
-          );
-
-          added++;
         }
 
         if (added > 0) {
-          _showMessage(
-            'تم المسح بواسطة Google Scanner بنجاح',
-          );
+          _showMessage('تم المسح بواسطة Google Scanner بنجاح');
         } else {
           _showMessage(
             'لم يتم العثور على صور صالحة',
@@ -282,107 +206,82 @@ class _MainScannerScreenState
       }
     } finally {
       if (mounted) {
-        setState(
-          () => _isScanning = false,
-        );
+        setState(() => _isScanning = false);
       }
     }
   }
 
-  Future<void> _addManualImages(
-    ImageSource source,
-  ) async {
+  Future<void> _addManualImages(ImageSource source) async {
     try {
-      if (source ==
-          ImageSource.camera) {
-        final photo =
-            await _picker.pickImage(
-          source:
-              ImageSource.camera,
+      if (source == ImageSource.camera) {
+        final photo = await _picker.pickImage(
+          source: ImageSource.camera,
           imageQuality: 95,
         );
 
-        if (photo == null) {
-          return;
-        }
+        if (photo == null) return;
 
-        final bytes =
-            await File(
-          photo.path,
-        ).readAsBytes();
+        final bytes = await File(photo.path).readAsBytes();
 
         await _processImageWithCropScreen(
           bytes,
-          isPhoto:
-              _activeTabMode ==
-                  'photos',
+          isPhoto: _activeTabMode == 'photos',
         );
 
         return;
       }
 
-      final files =
-          await _picker.pickMultiImage(
+      final files = await _picker.pickMultiImage(
         imageQuality: 95,
       );
 
       for (final file in files) {
-        final bytes =
-            await File(
-          file.path,
-        ).readAsBytes();
+        final bytes = await File(file.path).readAsBytes();
 
         await _processImageWithCropScreen(
           bytes,
-          isPhoto:
-              _activeTabMode ==
-                  'photos',
+          isPhoto: _activeTabMode == 'photos',
         );
       }
     } catch (e) {
       if (mounted) {
         _showMessage(
-          'خطأ في جلب الصور: $e',
+          'خطأ في جلب الصور',
           error: true,
         );
       }
     }
   }
 
-  Future<void>
-      _processImageWithCropScreen(
+  Future<void> _processImageWithCropScreen(
     Uint8List bytes, {
     bool isPhoto = false,
   }) async {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || bytes.isEmpty) return;
 
+    // الصور الشخصية تدخل مباشرة بدون شاشة القص.
     if (isPhoto) {
       _addRawBytes(
         bytes,
         isPhoto: true,
         curved: false,
       );
-
       return;
     }
 
-    final resultBytes =
-        await Navigator.push<
-            Uint8List>(
+    // المستمسكات تذهب إلى شاشة القص.
+    final resultBytes = await Navigator.push<Uint8List>(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            CropScreen(
+        builder: (_) => CropScreen(
           imageBytes: bytes,
         ),
       ),
     );
 
-    if (resultBytes != null &&
-        resultBytes.isNotEmpty &&
-        mounted) {
+    if (!mounted) return;
+
+    if (resultBytes != null && resultBytes.isNotEmpty) {
       _addRawBytes(
         resultBytes,
         isPhoto: false,
@@ -396,74 +295,54 @@ class _MainScannerScreenState
     bool isPhoto = false,
     bool curved = false,
   }) {
-    final mat =
-        ImageUtils.decodeBytes(
-      bytes,
-    );
+    final mat = ImageUtils.decodeBytes(bytes);
 
     if (mat == null) {
       _showMessage(
         'الصورة غير صالحة',
         error: true,
       );
-
       return;
     }
 
-    final imgWidth =
-        mat.cols.toDouble();
+    final imgWidth = mat.cols.toDouble();
+    final imgHeight = mat.rows.toDouble();
 
-    final imgHeight =
-        mat.rows.toDouble();
-
-    final ratio =
-        imgHeight / imgWidth;
-
-    if (!mounted) {
+    if (imgWidth <= 0 || imgHeight <= 0) {
+      _showMessage(
+        'أبعاد الصورة غير صالحة',
+        error: true,
+      );
       return;
     }
 
-    setState(
-      () {
-        final photoMode =
-            isPhoto ||
-                _activeTabMode ==
-                    'photos';
+    final ratio = imgHeight / imgWidth;
 
-        final width =
-            photoMode ? 36.0 : 85.0;
+    if (!mounted) return;
 
-        final height =
-            photoMode
-                ? 45.0
-                : width * ratio;
+    setState(() {
+      final photoMode =
+          isPhoto || _activeTabMode == 'photos';
 
-        final offset =
-            _items.length * 4.0;
+      final width = photoMode ? 36.0 : 85.0;
+      final height = photoMode ? 45.0 : width * ratio;
 
-        final item =
-            DocumentItem(
-          id: DateTime.now()
-              .microsecondsSinceEpoch
-              .toString(),
-          cachedBytes: bytes,
-          widthMm: width,
-          heightMm: height,
-          xMm:
-              pageMarginMm + offset,
-          yMm:
-              pageMarginMm + offset,
-          isPhotoMode:
-              photoMode,
-          hasCurvedCorners:
-              curved,
-        );
+      final offset = _items.length * 4.0;
 
-        _items.add(item);
+      final item = DocumentItem(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        cachedBytes: bytes,
+        widthMm: width,
+        heightMm: height,
+        xMm: pageMarginMm + offset,
+        yMm: pageMarginMm + offset,
+        isPhotoMode: photoMode,
+        hasCurvedCorners: curved,
+      );
 
-        _activeItem = item;
-      },
-    );
+      _items.add(item);
+      _activeItem = item;
+    });
   }
 
   void _resizeActiveItem(
@@ -472,274 +351,176 @@ class _MainScannerScreenState
     bool isPhoto = false,
     bool curved = false,
   }) {
-    final active =
-        _activeItem;
+    final active = _activeItem;
 
-    if (active == null) {
-      return;
-    }
+    if (active == null) return;
 
-    setState(
-      () {
-        active.widthMm = width;
-        active.heightMm = height;
-        active.isPhotoMode = isPhoto;
-        active.hasCurvedCorners =
-            curved;
-      },
-    );
+    setState(() {
+      active.widthMm = width;
+      active.heightMm = height;
+      active.isPhotoMode = isPhoto;
+      active.hasCurvedCorners = curved;
+    });
   }
 
   void _rotateActiveItem() {
-    final active =
-        _activeItem;
+    final active = _activeItem;
 
-    if (active == null) {
-      return;
-    }
+    if (active == null) return;
 
-    setState(
-      () {
-        active.rotationAngle =
-            (active.rotationAngle +
-                    90) %
-                360;
-
-        active.applyRotation();
-      },
-    );
+    setState(() {
+      active.rotationAngle =
+          (active.rotationAngle + 90) % 360;
+      active.applyRotation();
+    });
   }
 
   void _duplicateActiveItem() {
-    final source =
-        _activeItem;
+    final source = _activeItem;
 
-    if (source == null) {
-      return;
-    }
+    if (source == null) return;
 
-    setState(
-      () {
-        final duplicate =
-            DocumentItem(
-          id: DateTime.now()
-              .microsecondsSinceEpoch
-              .toString(),
-          cachedBytes:
-              Uint8List.fromList(
-            source.cachedBytes,
-          ),
-          widthMm:
-              source.widthMm,
-          heightMm:
-              source.heightMm,
-          xMm:
-              source.xMm + 5,
-          yMm:
-              source.yMm + 5,
-          rotationAngle:
-              source.rotationAngle,
-          isPhotoMode:
-              source.isPhotoMode,
-          hasCurvedCorners:
-              source.hasCurvedCorners,
-        );
+    setState(() {
+      final duplicate = DocumentItem(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        cachedBytes: Uint8List.fromList(
+          source.cachedBytes,
+        ),
+        widthMm: source.widthMm,
+        heightMm: source.heightMm,
+        xMm: source.xMm + 5,
+        yMm: source.yMm + 5,
+        rotationAngle: source.rotationAngle,
+        isPhotoMode: source.isPhotoMode,
+        hasCurvedCorners: source.hasCurvedCorners,
+      );
 
-        _items.add(
-          duplicate,
-        );
-
-        _activeItem =
-            duplicate;
-      },
-    );
+      _items.add(duplicate);
+      _activeItem = duplicate;
+    });
   }
 
   void _autoAlignItems() {
-    if (_items.isEmpty) {
-      return;
-    }
+    if (_items.isEmpty) return;
 
-    setState(
-      () {
-        double currentX =
-            pageMarginMm;
+    setState(() {
+      double currentX = pageMarginMm;
+      double currentY = pageMarginMm;
+      double rowHeight = 0;
 
-        double currentY =
-            pageMarginMm;
-
-        double rowHeight = 0;
-
-        for (final item
-            in _items) {
-          if (currentX +
-                  item.widthMm >
-              pageWidthMm -
-                  pageMarginMm) {
-            currentX =
-                pageMarginMm;
-
-            currentY +=
-                rowHeight + 5;
-
-            rowHeight = 0;
-          }
-
-          item.xMm =
-              currentX;
-
-          item.yMm =
-              currentY;
-
-          currentX +=
-              item.widthMm + 5;
-
-          rowHeight =
-              math.max(
-            rowHeight,
-            item.heightMm,
-          );
+      for (final item in _items) {
+        if (currentX + item.widthMm >
+            pageWidthMm - pageMarginMm) {
+          currentX = pageMarginMm;
+          currentY += rowHeight + 5;
+          rowHeight = 0;
         }
-      },
-    );
+
+        item.xMm = currentX;
+        item.yMm = currentY;
+
+        currentX += item.widthMm + 5;
+        rowHeight = math.max(
+          rowHeight,
+          item.heightMm,
+        );
+      }
+    });
   }
 
-  Future<void>
-      _manualCropActiveItem() async {
-    final active =
-        _activeItem;
+  Future<void> _manualCropActiveItem() async {
+    final active = _activeItem;
 
-    if (active == null) {
-      return;
-    }
+    if (active == null) return;
 
-    final resultBytes =
-        await Navigator.push<
-            Uint8List>(
+    final resultBytes = await Navigator.push<Uint8List>(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            CropScreen(
-          imageBytes:
-              active.cachedBytes,
+        builder: (_) => CropScreen(
+          imageBytes: active.cachedBytes,
         ),
       ),
     );
 
+    if (!mounted) return;
+
     if (resultBytes != null &&
-        resultBytes.isNotEmpty &&
-        mounted) {
-      setState(
-        () {
-          active.replaceImageBytes(
-            resultBytes,
-          );
-        },
-      );
+        resultBytes.isNotEmpty) {
+      setState(() {
+        active.replaceImageBytes(resultBytes);
+      });
     }
   }
 
   void _deleteActiveItem() {
-    final active =
-        _activeItem;
+    final active = _activeItem;
 
-    if (active == null) {
-      return;
-    }
+    if (active == null) return;
 
-    setState(
-      () {
-        _items.remove(
-          active,
-        );
-
-        _activeItem =
-            _items.isEmpty
-                ? null
-                : _items.last;
-      },
-    );
+    setState(() {
+      _items.remove(active);
+      _activeItem =
+          _items.isEmpty ? null : _items.last;
+    });
   }
 
-  Future<void>
-      _exportAndPrint() async {
+  Future<void> _exportAndPrint() async {
     if (_items.isEmpty) {
       _showMessage(
         'لا توجد مستندات للطباعة',
         error: true,
       );
-
       return;
     }
 
     try {
-      final pdf =
-          pw.Document();
+      final pdf = pw.Document();
 
       pdf.addPage(
         pw.Page(
-          pageFormat:
-              PdfPageFormat.a4,
-          margin:
-              pw.EdgeInsets.zero,
+          pageFormat: PdfPageFormat.a4,
+          margin: pw.EdgeInsets.zero,
           build: (context) {
             return pw.Stack(
-              children:
-                  _items.map(
-                (item) {
-                  return pw.Positioned(
-                    left:
-                        item.xMm *
-                            PdfPageFormat.mm,
-                    top:
-                        item.yMm *
-                            PdfPageFormat.mm,
-                    child:
-                        pw.ClipRRect(
-                      horizontalRadius:
-                          item.hasCurvedCorners
-                              ? 3.5 *
-                                  PdfPageFormat
-                                      .mm
-                              : 0,
-                      verticalRadius:
-                          item.hasCurvedCorners
-                              ? 3.5 *
-                                  PdfPageFormat
-                                      .mm
-                              : 0,
-                      child:
-                          pw.SizedBox(
-                        width:
-                            item.widthMm *
-                                PdfPageFormat
-                                    .mm,
-                        height:
-                            item.heightMm *
-                                PdfPageFormat
-                                    .mm,
-                        child:
-                            pw.Image(
-                          pw.MemoryImage(
-                            item.cachedBytes,
-                          ),
-                          fit: pw.BoxFit
-                              .fill,
+              children: _items.map((item) {
+                return pw.Positioned(
+                  left:
+                      item.xMm * PdfPageFormat.mm,
+                  top:
+                      item.yMm * PdfPageFormat.mm,
+                  child: pw.ClipRRect(
+                    horizontalRadius:
+                        item.hasCurvedCorners
+                            ? 3.5 * PdfPageFormat.mm
+                            : 0,
+                    verticalRadius:
+                        item.hasCurvedCorners
+                            ? 3.5 * PdfPageFormat.mm
+                            : 0,
+                    child: pw.SizedBox(
+                      width:
+                          item.widthMm *
+                          PdfPageFormat.mm,
+                      height:
+                          item.heightMm *
+                          PdfPageFormat.mm,
+                      child: pw.Image(
+                        pw.MemoryImage(
+                          item.cachedBytes,
                         ),
+                        fit: pw.BoxFit.fill,
                       ),
                     ),
-                  );
-                },
-              ).toList(),
+                  ),
+                );
+              }).toList(),
             );
           },
         ),
       );
 
       await Printing.layoutPdf(
-        onLayout:
-            (format) async =>
-                pdf.save(),
+        onLayout: (format) async => pdf.save(),
       );
     } catch (e) {
       if (mounted) {
@@ -755,62 +536,46 @@ class _MainScannerScreenState
     String message, {
     bool error = false,
   }) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    )
+    ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           content: Text(
             message,
-            textDirection:
-                TextDirection.rtl,
+            textDirection: TextDirection.rtl,
           ),
           backgroundColor:
-              error
-                  ? Colors.red.shade800
-                  : null,
+              error ? Colors.red.shade800 : null,
         ),
       );
   }
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         title: const Text(
           'مكتب علاء الحديدي - نظام الطباعة الاحترافي',
           style: TextStyle(
             fontSize: 13,
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor:
-            const Color(0xFF1E293B),
-        foregroundColor:
-            Colors.white,
+        backgroundColor: const Color(0xFF1E293B),
+        foregroundColor: Colors.white,
         actions: [
           IconButton(
-            tooltip:
-                'طباعة المستندات',
+            tooltip: 'طباعة المستندات',
             icon: const Icon(
               Icons.print_outlined,
             ),
-            onPressed:
-                _exportAndPrint,
+            onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip:
-                'ماسح Google الذكي',
+            tooltip: 'ماسح Google الذكي',
             icon: _isScanning
                 ? const SizedBox(
                     width: 18,
@@ -818,13 +583,11 @@ class _MainScannerScreenState
                     child:
                         CircularProgressIndicator(
                       strokeWidth: 2,
-                      color:
-                          Colors.white,
+                      color: Colors.white,
                     ),
                   )
                 : const Icon(
-                    Icons
-                        .document_scanner,
+                    Icons.document_scanner,
                   ),
             onPressed:
                 _isScanning
@@ -832,14 +595,11 @@ class _MainScannerScreenState
                     : _openGoogleScanner,
           ),
           IconButton(
-            tooltip:
-                'استيراد من المعرض',
+            tooltip: 'استيراد من المعرض',
             icon: const Icon(
-              Icons
-                  .photo_library_outlined,
+              Icons.photo_library_outlined,
             ),
-            onPressed: () =>
-                _addManualImages(
+            onPressed: () => _addManualImages(
               ImageSource.gallery,
             ),
           ),
@@ -849,13 +609,10 @@ class _MainScannerScreenState
         children: [
           Container(
             height: 48,
-            color:
-                const Color(0xFF111827),
+            color: const Color(0xFF111827),
             child: ListView(
-              scrollDirection:
-                  Axis.horizontal,
-              padding:
-                  const EdgeInsets.symmetric(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
                 horizontal: 8,
                 vertical: 6,
               ),
@@ -863,32 +620,21 @@ class _MainScannerScreenState
                 _buildToolBtn(
                   'المستمسكات',
                   Icons.badge_outlined,
-                  _activeTabMode ==
-                      'docs',
-                  () {
-                    setState(
-                      () =>
-                          _activeTabMode =
-                              'docs',
-                    );
-                  },
+                  _activeTabMode == 'docs',
+                  () => setState(
+                    () => _activeTabMode = 'docs',
+                  ),
                 ),
                 _buildToolBtn(
                   'الصور الشخصية',
                   Icons.person_outline,
-                  _activeTabMode ==
-                      'photos',
-                  () {
-                    setState(
-                      () =>
-                          _activeTabMode =
-                              'photos',
-                    );
-                  },
+                  _activeTabMode == 'photos',
+                  () => setState(
+                    () => _activeTabMode = 'photos',
+                  ),
                 ),
                 const VerticalDivider(
-                  color:
-                      Colors.white24,
+                  color: Colors.white24,
                   indent: 4,
                   endIndent: 4,
                 ),
@@ -896,33 +642,25 @@ class _MainScannerScreenState
                   'قص وتوضيح سحري',
                   Icons.crop,
                   _manualCropActiveItem,
-                  const Color(
-                    0xFF0EA5E9,
-                  ),
+                  const Color(0xFF0EA5E9),
                 ),
                 _buildActionBtn(
                   'تنسيق تلقائي',
                   Icons.grid_view,
                   _autoAlignItems,
-                  const Color(
-                    0xFF10B981,
-                  ),
+                  const Color(0xFF10B981),
                 ),
                 _buildActionBtn(
                   'تدوير',
                   Icons.rotate_right,
                   _rotateActiveItem,
-                  const Color(
-                    0xFF64748B,
-                  ),
+                  const Color(0xFF64748B),
                 ),
                 _buildActionBtn(
                   'نسخ',
                   Icons.copy_all,
                   _duplicateActiveItem,
-                  const Color(
-                    0xFF8B5CF6,
-                  ),
+                  const Color(0xFF8B5CF6),
                 ),
               ],
             ),
@@ -932,51 +670,34 @@ class _MainScannerScreenState
               children: [
                 Container(
                   width: 110,
-                  color:
-                      const Color(
-                    0xFF1E293B,
-                  ),
+                  color: const Color(0xFF1E293B),
                   child: Column(
                     children: [
                       Container(
                         padding:
-                            const EdgeInsets
-                                .symmetric(
+                            const EdgeInsets.symmetric(
                           vertical: 8,
                         ),
-                        width:
-                            double.infinity,
+                        width: double.infinity,
                         color:
-                            const Color(
-                          0xFF0F172A,
-                        ),
-                        child:
-                            const Text(
+                            const Color(0xFF0F172A),
+                        child: const Text(
                           'المقاسات القياسية',
-                          textAlign:
-                              TextAlign.center,
-                          style:
-                              TextStyle(
-                            color: Colors
-                                .white70,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white70,
                             fontSize: 10,
                             fontWeight:
-                                FontWeight
-                                    .bold,
+                                FontWeight.bold,
                           ),
                         ),
                       ),
                       Expanded(
-                        child:
-                            ListView(
+                        child: ListView(
                           padding:
-                              const EdgeInsets
-                                  .all(
-                            6,
-                          ),
+                              const EdgeInsets.all(6),
                           children:
-                              _activeTabMode ==
-                                      'docs'
+                              _activeTabMode == 'docs'
                                   ? [
                                       _buildSizeBtn(
                                         'بطاقة موحدة',
@@ -985,8 +706,7 @@ class _MainScannerScreenState
                                             _resizeActiveItem(
                                           85,
                                           54,
-                                          curved:
-                                              true,
+                                          curved: true,
                                         ),
                                       ),
                                       _buildSizeBtn(
@@ -996,8 +716,7 @@ class _MainScannerScreenState
                                             _resizeActiveItem(
                                           88,
                                           58,
-                                          curved:
-                                              true,
+                                          curved: true,
                                         ),
                                       ),
                                       _buildSizeBtn(
@@ -1007,8 +726,7 @@ class _MainScannerScreenState
                                             _resizeActiveItem(
                                           210,
                                           297,
-                                          curved:
-                                              false,
+                                          curved: false,
                                         ),
                                         clr:
                                             const Color(
@@ -1024,8 +742,7 @@ class _MainScannerScreenState
                                             _resizeActiveItem(
                                           36,
                                           45,
-                                          isPhoto:
-                                              true,
+                                          isPhoto: true,
                                         ),
                                       ),
                                       _buildSizeBtn(
@@ -1035,73 +752,54 @@ class _MainScannerScreenState
                                             _resizeActiveItem(
                                           25,
                                           34,
-                                          isPhoto:
-                                              true,
+                                          isPhoto: true,
                                         ),
                                       ),
                                     ],
                         ),
                       ),
-                      if (_activeItem !=
-                          null)
+                      if (_activeItem != null)
                         Padding(
                           padding:
-                              const EdgeInsets
-                                  .all(
-                            6,
-                          ),
-                          child:
-                              SizedBox(
-                            width:
-                                double.infinity,
+                              const EdgeInsets.all(6),
+                          child: SizedBox(
+                            width: double.infinity,
                             child:
-                                ElevatedButton
-                                    .icon(
+                                ElevatedButton.icon(
                               style:
-                                  ElevatedButton
-                                      .styleFrom(
+                                  ElevatedButton.styleFrom(
                                 backgroundColor:
                                     const Color(
                                   0xFFDC2626,
                                 ),
                                 foregroundColor:
-                                    Colors
-                                        .white,
-                                elevation:
-                                    0,
+                                    Colors.white,
+                                elevation: 0,
                                 padding:
                                     const EdgeInsets
                                         .symmetric(
-                                  vertical:
-                                      8,
+                                  vertical: 8,
                                 ),
                                 shape:
                                     RoundedRectangleBorder(
                                   borderRadius:
-                                      BorderRadius.circular(
-                                    6,
-                                  ),
+                                      BorderRadius
+                                          .circular(6),
                                 ),
                               ),
                               onPressed:
                                   _deleteActiveItem,
-                              icon:
-                                  const Icon(
+                              icon: const Icon(
                                 Icons
                                     .delete_sweep_outlined,
-                                size:
-                                    16,
+                                size: 16,
                               ),
-                              label:
-                                  const Text(
+                              label: const Text(
                                 'حذف العنصر',
-                                style:
-                                    TextStyle(
-                                  fontSize:
-                                      10,
+                                style: TextStyle(
+                                  fontSize: 10,
                                   fontWeight:
-                                      FontWeight
-                                          .bold,
+                                      FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -1111,58 +809,42 @@ class _MainScannerScreenState
                   ),
                 ),
                 Expanded(
-                  child:
-                      Container(
-                    color:
-                        const Color(
-                      0xFF090D16,
-                    ),
-                    child:
-                        Center(
-                      child:
-                          LayoutBuilder(
+                  child: Container(
+                    color: const Color(0xFF090D16),
+                    child: Center(
+                      child: LayoutBuilder(
                         builder:
                             (
-                          context,
-                          constraints,
-                        ) {
+                              context,
+                              constraints,
+                            ) {
                           final scaleX =
                               (constraints.maxWidth -
                                       30) /
                                   pageWidthMm;
-
                           final scaleY =
-                              (constraints.maxHeight -
+                              (constraints
+                                          .maxHeight -
                                       30) /
                                   pageHeightMm;
-
-                          final scale =
-                              math.min(
+                          final scale = math.min(
                             scaleX,
                             scaleY,
                           );
 
                           return Container(
                             width:
-                                pageWidthMm *
-                                    scale,
+                                pageWidthMm * scale,
                             height:
-                                pageHeightMm *
-                                    scale,
+                                pageHeightMm * scale,
                             decoration:
                                 BoxDecoration(
-                              color:
-                                  Colors
-                                      .white,
+                              color: Colors.white,
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors
-                                      .black
-                                      .withAlpha(
-                                    153,
-                                  ),
-                                  blurRadius:
-                                      16,
+                                  color: Colors.black
+                                      .withAlpha(153),
+                                  blurRadius: 16,
                                   offset:
                                       const Offset(
                                     0,
@@ -1171,100 +853,87 @@ class _MainScannerScreenState
                                 ),
                               ],
                             ),
-                            child:
-                                Stack(
+                            child: Stack(
                               children:
-                                  _items
-                                      .map(
-                                (item) {
-                                  final active =
-                                      _activeItem?.id ==
-                                          item.id;
+                                  _items.map((item) {
+                                final active =
+                                    _activeItem?.id ==
+                                        item.id;
 
-                                  final radius =
-                                      item.hasCurvedCorners
-                                          ? BorderRadius.circular(
-                                              3.5 *
-                                                  scale,
-                                            )
-                                          : BorderRadius
-                                              .zero;
+                                final radius =
+                                    item.hasCurvedCorners
+                                        ? BorderRadius
+                                            .circular(
+                                            3.5 * scale,
+                                          )
+                                        : BorderRadius
+                                            .zero;
 
-                                  return Positioned(
-                                    left:
-                                        item.xMm *
-                                            scale,
-                                    top:
-                                        item.yMm *
-                                            scale,
-                                    width:
-                                        item.widthMm *
-                                            scale,
-                                    height:
-                                        item.heightMm *
-                                            scale,
-                                    child:
-                                        GestureDetector(
-                                      onTap:
-                                          () {
+                                return Positioned(
+                                  left:
+                                      item.xMm * scale,
+                                  top:
+                                      item.yMm * scale,
+                                  width:
+                                      item.widthMm *
+                                      scale,
+                                  height:
+                                      item.heightMm *
+                                      scale,
+                                  child:
+                                      GestureDetector(
+                                    onTap: () =>
                                         setState(
-                                          () =>
-                                              _activeItem =
-                                                  item,
-                                        );
-                                      },
-                                      onPanUpdate:
-                                          (
-                                        details,
-                                      ) {
-                                        setState(
-                                          () {
-                                            item.xMm +=
-                                                details.delta.dx /
-                                                    scale;
-
-                                            item.yMm +=
-                                                details.delta.dy /
-                                                    scale;
-                                          },
-                                        );
-                                      },
-                                      child:
-                                          Container(
-                                        decoration:
-                                            BoxDecoration(
-                                          borderRadius:
-                                              radius,
-                                          border:
-                                              Border.all(
-                                            color: active
-                                                ? const Color(
-                                                    0xFF0284C7,
-                                                  )
-                                                : Colors
-                                                    .transparent,
-                                            width:
-                                                active
-                                                    ? 2
-                                                    : 1,
-                                          ),
+                                      () =>
+                                          _activeItem =
+                                              item,
+                                    ),
+                                    onPanUpdate:
+                                        (details) {
+                                      setState(() {
+                                        item.xMm +=
+                                            details.delta
+                                                    .dx /
+                                                scale;
+                                        item.yMm +=
+                                            details.delta
+                                                    .dy /
+                                                scale;
+                                      });
+                                    },
+                                    child: Container(
+                                      decoration:
+                                          BoxDecoration(
+                                        borderRadius:
+                                            radius,
+                                        border:
+                                            Border.all(
+                                          color: active
+                                              ? const Color(
+                                                  0xFF0284C7,
+                                                )
+                                              : Colors
+                                                  .transparent,
+                                          width: active
+                                              ? 2
+                                              : 1,
                                         ),
+                                      ),
+                                      child:
+                                          ClipRRect(
+                                        borderRadius:
+                                            radius,
                                         child:
-                                            ClipRRect(
-                                          borderRadius:
-                                              radius,
-                                          child:
-                                              Image.memory(
-                                            item.cachedBytes,
-                                            fit:
-                                                BoxFit.fill,
-                                          ),
+                                            Image.memory(
+                                          item.cachedBytes,
+                                          fit:
+                                              BoxFit.fill,
                                         ),
                                       ),
                                     ),
-                                  );
-                                },
-                              ).toList(),
+                                  ),
+                                );
+                              }).toList(),
                             ),
                           );
                         },
@@ -1288,38 +957,26 @@ class _MainScannerScreenState
   ) {
     return Padding(
       padding:
-          const EdgeInsets.symmetric(
-        horizontal: 3,
-      ),
+          const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(
-          6,
-        ),
+        borderRadius: BorderRadius.circular(6),
         child: Container(
           padding:
               const EdgeInsets.symmetric(
             horizontal: 10,
             vertical: 4,
           ),
-          decoration:
-              BoxDecoration(
+          decoration: BoxDecoration(
             color: selected
-                ? const Color(
-                    0xFF0284C7,
-                  ).withAlpha(51)
+                ? const Color(0xFF0284C7)
+                    .withAlpha(51)
                 : Colors.transparent,
             borderRadius:
-                BorderRadius.circular(
-              6,
-            ),
-            border:
-                Border.all(
+                BorderRadius.circular(6),
+            border: Border.all(
               color: selected
-                  ? const Color(
-                      0xFF0284C7,
-                    )
+                  ? const Color(0xFF0284C7)
                   : Colors.white24,
             ),
           ),
@@ -1329,14 +986,10 @@ class _MainScannerScreenState
                 icon,
                 size: 14,
                 color: selected
-                    ? const Color(
-                        0xFF38BDF8,
-                      )
+                    ? const Color(0xFF38BDF8)
                     : Colors.white70,
               ),
-              const SizedBox(
-                width: 5,
-              ),
+              const SizedBox(width: 5),
               Text(
                 label,
                 style: TextStyle(
@@ -1344,9 +997,7 @@ class _MainScannerScreenState
                   fontWeight:
                       FontWeight.bold,
                   color: selected
-                      ? const Color(
-                          0xFF38BDF8,
-                        )
+                      ? const Color(0xFF38BDF8)
                       : Colors.white70,
                 ),
               ),
@@ -1365,33 +1016,22 @@ class _MainScannerScreenState
   ) {
     return Padding(
       padding:
-          const EdgeInsets.symmetric(
-        horizontal: 3,
-      ),
+          const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(
-          6,
-        ),
+        borderRadius: BorderRadius.circular(6),
         child: Container(
           padding:
               const EdgeInsets.symmetric(
             horizontal: 8,
             vertical: 4,
           ),
-          decoration:
-              BoxDecoration(
-            color:
-                color.withAlpha(38),
+          decoration: BoxDecoration(
+            color: color.withAlpha(38),
             borderRadius:
-                BorderRadius.circular(
-              6,
-            ),
-            border:
-                Border.all(
-              color:
-                  color.withAlpha(102),
+                BorderRadius.circular(6),
+            border: Border.all(
+              color: color.withAlpha(102),
             ),
           ),
           child: Row(
@@ -1401,9 +1041,7 @@ class _MainScannerScreenState
                 size: 14,
                 color: color,
               ),
-              const SizedBox(
-                width: 4,
-              ),
+              const SizedBox(width: 4),
               Text(
                 label,
                 style: TextStyle(
@@ -1424,14 +1062,11 @@ class _MainScannerScreenState
     String title,
     String subtitle,
     VoidCallback onTap, {
-    Color clr =
-        const Color(0xFF0284C7),
+    Color clr = const Color(0xFF0284C7),
   }) {
     return Padding(
       padding:
-          const EdgeInsets.symmetric(
-        vertical: 3,
-      ),
+          const EdgeInsets.symmetric(vertical: 3),
       child: ElevatedButton(
         style:
             ElevatedButton.styleFrom(
@@ -1443,17 +1078,13 @@ class _MainScannerScreenState
           backgroundColor:
               clr.withAlpha(30),
           foregroundColor: clr,
-          side:
-              BorderSide(
-            color:
-                clr.withAlpha(76),
+          side: BorderSide(
+            color: clr.withAlpha(76),
           ),
           shape:
               RoundedRectangleBorder(
             borderRadius:
-                BorderRadius.circular(
-              6,
-            ),
+                BorderRadius.circular(6),
           ),
           elevation: 0,
         ),
@@ -1469,17 +1100,13 @@ class _MainScannerScreenState
                 color: clr,
               ),
             ),
-            const SizedBox(
-              height: 2,
-            ),
+            const SizedBox(height: 2),
             Text(
               subtitle,
               style: TextStyle(
                 fontSize: 8,
                 color:
-                    clr.withAlpha(
-                  204,
-                ),
+                    clr.withAlpha(204),
               ),
             ),
           ],
@@ -1489,8 +1116,7 @@ class _MainScannerScreenState
   }
 }
 
-class CropBoxPainter
-    extends CustomPainter {
+class CropBoxPainter extends CustomPainter {
   final Offset p1;
   final Offset p2;
   final Offset p3;
@@ -1508,68 +1134,37 @@ class CropBoxPainter
     Canvas canvas,
     Size size,
   ) {
-    final fillPaint =
-        Paint()
-          ..color =
-              const Color(
-            0xFF0284C7,
-          ).withAlpha(35)
-          ..style =
-              PaintingStyle.fill;
-
-    final strokePaint =
-        Paint()
-          ..color =
-              const Color(
-            0xFF38BDF8,
-          )
-          ..strokeWidth = 2.5
-          ..style =
-              PaintingStyle.stroke
-          ..strokeJoin =
-              StrokeJoin.round;
+    final paint = Paint()
+      ..color =
+          const Color(0xFF0284C7)
+              .withAlpha(220)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeJoin =
+          StrokeJoin.round;
 
     final path = Path()
-      ..moveTo(
-        p1.dx,
-        p1.dy,
-      )
-      ..lineTo(
-        p2.dx,
-        p2.dy,
-      )
-      ..lineTo(
-        p3.dx,
-        p3.dy,
-      )
-      ..lineTo(
-        p4.dx,
-        p4.dy,
-      )
+      ..moveTo(p1.dx, p1.dy)
+      ..lineTo(p2.dx, p2.dy)
+      ..lineTo(p3.dx, p3.dy)
+      ..lineTo(p4.dx, p4.dy)
       ..close();
 
     canvas.drawPath(
       path,
-      fillPaint,
-    );
-
-    canvas.drawPath(
-      path,
-      strokePaint,
+      paint,
     );
   }
 
   @override
   bool shouldRepaint(
-    covariant CustomPainter
-        oldDelegate,
+    covariant CustomPainter oldDelegate,
   ) {
     return true;
   }
 }
 
-class CropScreen
-    extends StatefulWidget {
+class CropScreen extends StatefulWidget {
   final Uint8List imageBytes;
 
   const CropScreen({
@@ -1586,13 +1181,10 @@ class _CropScreenState
     extends State<CropScreen> {
   double _x1 = 0.05;
   double _y1 = 0.05;
-
   double _x2 = 0.95;
   double _y2 = 0.05;
-
   double _x3 = 0.95;
   double _y3 = 0.95;
-
   double _x4 = 0.05;
   double _y4 = 0.95;
 
@@ -1605,15 +1197,15 @@ class _CropScreenState
   int _imgHeight = 100;
 
   Offset? _dragFocalPoint;
-
   bool _isDetecting = false;
 
   @override
   void initState() {
     super.initState();
 
-    // الصورة الأصلية تظهر فوراً.
-    // لا نمررها عبر OpenCV قبل العرض.
+    // مهم جداً:
+    // العرض يعتمد مباشرة على صورة المعرض.
+    // لا نمررها عبر OpenCV حتى لا تظهر شاشة سوداء.
     _displayBytes =
         widget.imageBytes;
 
@@ -1626,82 +1218,35 @@ class _CropScreenState
       widget.imageBytes,
     );
 
-    if (mat == null) {
-      return;
+    if (mat != null &&
+        !mat.isEmpty) {
+      _imgWidth = mat.cols;
+      _imgHeight = mat.rows;
     }
-
-    _imgWidth = mat.cols;
-    _imgHeight = mat.rows;
-  }
-
-  void _updateDisplayBytes({
-    cv.Mat? sourceMat,
-  }) {
-    final mat =
-        sourceMat ??
-            ImageUtils.decodeBytes(
-              widget.imageBytes,
-            );
-
-    if (mat == null) {
-      return;
-    }
-
-    final processed =
-        ImageEnhancer.apply(
-      mat,
-      _filter,
-    );
-
-    final encoded =
-        ImageUtils.encodeJpg(
-      processed,
-      quality: 92,
-    );
-
-    if (encoded.isEmpty) {
-      return;
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(
-      () {
-        _displayBytes =
-            encoded;
-      },
-    );
   }
 
   void _selectAll() {
-    setState(
-      () {
-        _x1 = 0.0;
-        _y1 = 0.0;
+    setState(() {
+      _x1 = 0.0;
+      _y1 = 0.0;
 
-        _x2 = 1.0;
-        _y2 = 0.0;
+      _x2 = 1.0;
+      _y2 = 0.0;
 
-        _x3 = 1.0;
-        _y3 = 1.0;
+      _x3 = 1.0;
+      _y3 = 1.0;
 
-        _x4 = 0.0;
-        _y4 = 1.0;
-      },
-    );
+      _x4 = 0.0;
+      _y4 = 1.0;
+    });
   }
 
-  Future<void>
-      _runAutoDetect() async {
-    if (_isDetecting) {
-      return;
-    }
+  Future<void> _runAutoDetect() async {
+    if (_isDetecting) return;
 
-    setState(
-      () => _isDetecting = true,
-    );
+    setState(() {
+      _isDetecting = true;
+    });
 
     try {
       final mat =
@@ -1709,28 +1254,16 @@ class _CropScreenState
         widget.imageBytes,
       );
 
-      if (mat == null) {
-        _showSnack(
-          'تعذر قراءة الصورة',
-        );
+      if (mat != null &&
+          !mat.isEmpty) {
+        final corners =
+            SmartCrop.detectCorners(mat);
 
-        return;
-      }
+        if (corners != null &&
+            corners.length == 8) {
+          if (!mounted) return;
 
-      // OpenCV يعمل هنا فعلياً.
-      final corners =
-          SmartCrop.detectCorners(
-        mat,
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      if (corners != null &&
-          corners.length == 8) {
-        setState(
-          () {
+          setState(() {
             _x1 = corners[0];
             _y1 = corners[1];
 
@@ -1742,47 +1275,26 @@ class _CropScreenState
 
             _x4 = corners[6];
             _y4 = corners[7];
-          },
-        );
-
-        _showSnack(
-          'تم اكتشاف حدود المستند بواسطة OpenCV',
-        );
-      } else {
-        _showSnack(
-          'لم يتم العثور على مستند واضح، عدّل النقاط يدوياً',
-        );
+          });
+        }
       }
     } catch (e) {
-      debugPrint(
-        'Auto detect error: $e',
+      _showSnack(
+        'تعذر تشغيل الكشف التلقائي',
       );
-
-      if (mounted) {
-        _showSnack(
-          'تعذر تشغيل الكشف التلقائي',
-        );
-      }
     } finally {
       if (mounted) {
-        setState(
-          () =>
-              _isDetecting = false,
-        );
+        setState(() {
+          _isDetecting = false;
+        });
       }
     }
   }
 
-  void _showSnack(
-    String message,
-  ) {
-    if (!mounted) {
-      return;
-    }
+  void _showSnack(String message) {
+    if (!mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    )
+    ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
@@ -1801,17 +1313,17 @@ class _CropScreenState
       widget.imageBytes,
     );
 
-    if (mat == null) {
+    if (mat == null ||
+        mat.isEmpty) {
       Navigator.pop(
         context,
         widget.imageBytes,
       );
-
       return;
     }
 
     try {
-      var cropped =
+      cv.Mat? cropped =
           ManualCrop.cropPerspective(
         mat,
         _x1,
@@ -1824,37 +1336,45 @@ class _CropScreenState
         _y4,
       );
 
-      if (cropped != null &&
-          !cropped.isEmpty) {
+      if (cropped == null ||
+          cropped.isEmpty) {
+        Navigator.pop(
+          context,
+          widget.imageBytes,
+        );
+        return;
+      }
+
+      // الفلتر يطبق فقط عند الضغط على الصح.
+      if (_filter !=
+          EnhanceMode.none) {
         cropped =
             ImageEnhancer.apply(
           cropped,
           _filter,
         );
-
-        final resultBytes =
-            ImageUtils.encodeJpg(
-          cropped,
-          quality: 95,
-        );
-
-        if (resultBytes.isNotEmpty) {
-          Navigator.pop(
-            context,
-            resultBytes,
-          );
-
-          return;
-        }
       }
 
-      Navigator.pop(
-        context,
-        widget.imageBytes,
+      final resultBytes =
+          ImageUtils.encodeJpg(
+        cropped,
+        quality: 95,
       );
+
+      if (resultBytes.isNotEmpty) {
+        Navigator.pop(
+          context,
+          resultBytes,
+        );
+      } else {
+        Navigator.pop(
+          context,
+          widget.imageBytes,
+        );
+      }
     } catch (e) {
       debugPrint(
-        'Apply crop error: $e',
+        'Crop apply error: $e',
       );
 
       Navigator.pop(
@@ -1873,19 +1393,14 @@ class _CropScreenState
           Colors.black,
       appBar: AppBar(
         backgroundColor:
-            const Color(
-          0xFF1E293B,
-        ),
-        leading:
-            IconButton(
+            const Color(0xFF1E293B),
+        leading: IconButton(
           icon: const Icon(
             Icons.close,
             color: Colors.white,
           ),
           onPressed: () =>
-              Navigator.pop(
-            context,
-          ),
+              Navigator.pop(context),
         ),
         title:
             SingleChildScrollView(
@@ -1896,18 +1411,12 @@ class _CropScreenState
               _filterChip(
                 'أصلي',
                 _filter ==
-                    EnhanceMode
-                        .none,
+                    EnhanceMode.none,
                 () {
-                  setState(
-                    () {
-                      _filter =
-                          EnhanceMode
-                              .none;
-                    },
-                  );
-
-                  _updateDisplayBytes();
+                  setState(() {
+                    _filter =
+                        EnhanceMode.none;
+                  });
                 },
               ),
               const SizedBox(
@@ -1916,18 +1425,12 @@ class _CropScreenState
               _filterChip(
                 'تحسين سحري ✨',
                 _filter ==
-                    EnhanceMode
-                        .soft,
+                    EnhanceMode.soft,
                 () {
-                  setState(
-                    () {
-                      _filter =
-                          EnhanceMode
-                              .soft;
-                    },
-                  );
-
-                  _updateDisplayBytes();
+                  setState(() {
+                    _filter =
+                        EnhanceMode.soft;
+                  });
                 },
               ),
               const SizedBox(
@@ -1936,18 +1439,12 @@ class _CropScreenState
               _filterChip(
                 'أبيض وأسود رسمي',
                 _filter ==
-                    EnhanceMode
-                        .bw,
+                    EnhanceMode.bw,
                 () {
-                  setState(
-                    () {
-                      _filter =
-                          EnhanceMode
-                              .bw;
-                    },
-                  );
-
-                  _updateDisplayBytes();
+                  setState(() {
+                    _filter =
+                        EnhanceMode.bw;
+                  });
                 },
               ),
             ],
@@ -1955,132 +1452,114 @@ class _CropScreenState
         ),
         actions: [
           IconButton(
-            tooltip:
-                'تحديد الكل',
+            tooltip: 'تحديد الكل',
             icon: const Icon(
               Icons
                   .auto_awesome_mosaic,
-              color:
-                  Colors.amber,
+              color: Colors.amber,
             ),
-            onPressed:
-                _selectAll,
+            onPressed: _selectAll,
           ),
           IconButton(
-            tooltip:
-                'تم والتصدير',
+            tooltip: 'تم والتصدير',
             icon: const Icon(
               Icons.check,
               color:
                   Colors.greenAccent,
             ),
-            onPressed:
-                _applyCrop,
+            onPressed: _applyCrop,
           ),
         ],
       ),
       body: Column(
         children: [
           Expanded(
-            child:
-                LayoutBuilder(
-              builder: (
-                context,
-                constraints,
-              ) {
+            child: LayoutBuilder(
+              builder:
+                  (
+                    context,
+                    constraints,
+                  ) {
                 final cw =
                     constraints.maxWidth;
-
                 final ch =
                     constraints.maxHeight;
 
                 final iw =
-                    _imgWidth
-                        .toDouble();
-
+                    _imgWidth.toDouble();
                 final ih =
-                    _imgHeight
-                        .toDouble();
+                    _imgHeight.toDouble();
 
-                final scale =
-                    math.min(
+                final scale = math.min(
                   cw / iw,
                   ch / ih,
                 );
 
                 final imgW =
                     iw * scale;
-
                 final imgH =
                     ih * scale;
 
                 final imgL =
-                    (cw - imgW) /
-                        2;
-
+                    (cw - imgW) / 2;
                 final imgT =
-                    (ch - imgH) /
-                        2;
+                    (ch - imgH) / 2;
 
-                final p1 =
-                    Offset(
-                  imgL +
-                      _x1 *
-                          imgW,
-                  imgT +
-                      _y1 *
-                          imgH,
+                final p1 = Offset(
+                  imgL + _x1 * imgW,
+                  imgT + _y1 * imgH,
                 );
 
-                final p2 =
-                    Offset(
-                  imgL +
-                      _x2 *
-                          imgW,
-                  imgT +
-                      _y2 *
-                          imgH,
+                final p2 = Offset(
+                  imgL + _x2 * imgW,
+                  imgT + _y2 * imgH,
                 );
 
-                final p3 =
-                    Offset(
-                  imgL +
-                      _x3 *
-                          imgW,
-                  imgT +
-                      _y3 *
-                          imgH,
+                final p3 = Offset(
+                  imgL + _x3 * imgW,
+                  imgT + _y3 * imgH,
                 );
 
-                final p4 =
-                    Offset(
-                  imgL +
-                      _x4 *
-                          imgW,
-                  imgT +
-                      _y4 *
-                          imgH,
+                final p4 = Offset(
+                  imgL + _x4 * imgW,
+                  imgT + _y4 * imgH,
                 );
 
                 return Stack(
                   children: [
+                    // الصورة الأصلية مباشرة.
+                    // هذا هو الإصلاح الأساسي للشاشة السوداء.
                     Positioned(
                       left: imgL,
                       top: imgT,
                       width: imgW,
                       height: imgH,
-                      child:
-                          Image.memory(
+                      child: Image.memory(
                         _displayBytes,
                         fit: BoxFit.fill,
-                        gaplessPlayback:
-                            true,
+                        gaplessPlayback: true,
+                        errorBuilder:
+                            (
+                              context,
+                              error,
+                              stack,
+                            ) {
+                          return const Center(
+                            child: Text(
+                              'تعذر عرض الصورة',
+                              style:
+                                  TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
 
                     Positioned.fill(
-                      child:
-                          CustomPaint(
+                      child: CustomPaint(
                         painter:
                             CropBoxPainter(
                           p1,
@@ -2102,14 +1581,10 @@ class _CropScreenState
                         nx,
                         ny,
                       ) {
-                        setState(
-                          () {
-                            _x1 =
-                                nx;
-                            _y1 =
-                                ny;
-                          },
-                        );
+                        setState(() {
+                          _x1 = nx;
+                          _y1 = ny;
+                        });
                       },
                     ),
 
@@ -2124,14 +1599,10 @@ class _CropScreenState
                         nx,
                         ny,
                       ) {
-                        setState(
-                          () {
-                            _x2 =
-                                nx;
-                            _y2 =
-                                ny;
-                          },
-                        );
+                        setState(() {
+                          _x2 = nx;
+                          _y2 = ny;
+                        });
                       },
                     ),
 
@@ -2146,14 +1617,10 @@ class _CropScreenState
                         nx,
                         ny,
                       ) {
-                        setState(
-                          () {
-                            _x3 =
-                                nx;
-                            _y3 =
-                                ny;
-                          },
-                        );
+                        setState(() {
+                          _x3 = nx;
+                          _y3 = ny;
+                        });
                       },
                     ),
 
@@ -2168,14 +1635,10 @@ class _CropScreenState
                         nx,
                         ny,
                       ) {
-                        setState(
-                          () {
-                            _x4 =
-                                nx;
-                            _y4 =
-                                ny;
-                          },
-                        );
+                        setState(() {
+                          _x4 = nx;
+                          _y4 = ny;
+                        });
                       },
                     ),
 
@@ -2192,41 +1655,29 @@ class _CropScreenState
                         dnx,
                         dny,
                       ) {
-                        setState(
-                          () {
-                            _x1 =
-                                (_x1 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
+                        setState(() {
+                          _x1 = (_x1 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y1 = (_y1 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
 
-                            _y1 =
-                                (_y1 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _x2 =
-                                (_x2 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _y2 =
-                                (_y2 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-                          },
-                        );
+                          _x2 = (_x2 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y2 = (_y2 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                        });
                       },
                     ),
 
@@ -2243,41 +1694,29 @@ class _CropScreenState
                         dnx,
                         dny,
                       ) {
-                        setState(
-                          () {
-                            _x2 =
-                                (_x2 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
+                        setState(() {
+                          _x2 = (_x2 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y2 = (_y2 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
 
-                            _y2 =
-                                (_y2 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _x3 =
-                                (_x3 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _y3 =
-                                (_y3 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-                          },
-                        );
+                          _x3 = (_x3 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y3 = (_y3 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                        });
                       },
                     ),
 
@@ -2294,41 +1733,29 @@ class _CropScreenState
                         dnx,
                         dny,
                       ) {
-                        setState(
-                          () {
-                            _x3 =
-                                (_x3 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
+                        setState(() {
+                          _x3 = (_x3 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y3 = (_y3 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
 
-                            _y3 =
-                                (_y3 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _x4 =
-                                (_x4 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _y4 =
-                                (_y4 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-                          },
-                        );
+                          _x4 = (_x4 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y4 = (_y4 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                        });
                       },
                     ),
 
@@ -2345,41 +1772,29 @@ class _CropScreenState
                         dnx,
                         dny,
                       ) {
-                        setState(
-                          () {
-                            _x4 =
-                                (_x4 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
+                        setState(() {
+                          _x4 = (_x4 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y4 = (_y4 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
 
-                            _y4 =
-                                (_y4 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _x1 =
-                                (_x1 +
-                                        dnx)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-
-                            _y1 =
-                                (_y1 +
-                                        dny)
-                                    .clamp(
-                              0.0,
-                              1.0,
-                            );
-                          },
-                        );
+                          _x1 = (_x1 + dnx)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                          _y1 = (_y1 + dny)
+                              .clamp(
+                            0.0,
+                            1.0,
+                          );
+                        });
                       },
                     ),
 
@@ -2391,52 +1806,6 @@ class _CropScreenState
                       imgW,
                       imgH,
                     ),
-
-                    if (_isDetecting)
-                      Positioned.fill(
-                        child:
-                            Container(
-                          color: Colors
-                              .black
-                              .withAlpha(
-                            70,
-                          ),
-                          child:
-                              const Center(
-                            child:
-                                Column(
-                              mainAxisSize:
-                                  MainAxisSize
-                                      .min,
-                              children: [
-                                CircularProgressIndicator(
-                                  color:
-                                      Color(
-                                    0xFF38BDF8,
-                                  ),
-                                ),
-                                SizedBox(
-                                  height:
-                                      12,
-                                ),
-                                Text(
-                                  'OpenCV يبحث عن حدود المستند...',
-                                  textDirection:
-                                      TextDirection
-                                          .rtl,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
                   ],
                 );
               },
@@ -2459,18 +1828,16 @@ class _CropScreenState
                   label: 'الكل',
                   icon:
                       Icons.crop_free,
-                  onTap:
-                      _selectAll,
+                  onTap: _selectAll,
                 ),
                 _bottomToolButton(
                   label:
                       'القص التلقائي',
                   icon:
                       Icons.auto_fix_high,
-                  onTap:
-                      _isDetecting
-                          ? null
-                          : _runAutoDetect,
+                  onTap: _isDetecting
+                      ? null
+                      : _runAutoDetect,
                   isLoading:
                       _isDetecting,
                 ),
@@ -2485,16 +1852,13 @@ class _CropScreenState
   Widget _bottomToolButton({
     required String label,
     required IconData icon,
-    required VoidCallback?
-        onTap,
+    required VoidCallback? onTap,
     bool isLoading = false,
   }) {
     return InkWell(
       onTap: onTap,
       borderRadius:
-          BorderRadius.circular(
-        8,
-      ),
+          BorderRadius.circular(8),
       child: Padding(
         padding:
             const EdgeInsets.symmetric(
@@ -2513,9 +1877,7 @@ class _CropScreenState
                         CircularProgressIndicator(
                       strokeWidth: 2,
                       color:
-                          Color(
-                        0xFF38BDF8,
-                      ),
+                          Color(0xFF38BDF8),
                     ),
                   )
                 : Icon(
@@ -2526,9 +1888,7 @@ class _CropScreenState
                     ),
                     size: 22,
                   ),
-            const SizedBox(
-              height: 4,
-            ),
+            const SizedBox(height: 4),
             Text(
               label,
               style:
@@ -2560,15 +1920,11 @@ class _CropScreenState
       double dny,
     ) onDelta,
   ) {
-    final mx =
-        (ax + bx) / 2;
-
-    final my =
-        (ay + by) / 2;
+    final mx = (ax + bx) / 2;
+    final my = (ay + by) / 2;
 
     final centerX =
         il + mx * iw;
-
     final centerY =
         it + my * ih;
 
@@ -2577,79 +1933,57 @@ class _CropScreenState
             (by - ay).abs();
 
     return Positioned(
-      left:
-          centerX - 14,
-      top:
-          centerY - 14,
-      child:
-          GestureDetector(
+      left: centerX - 14,
+      top: centerY - 14,
+      child: GestureDetector(
         onPanStart: (_) {
-          setState(
-            () {
-              _dragFocalPoint =
-                  Offset(
-                centerX,
-                centerY,
-              );
-            },
-          );
+          setState(() {
+            _dragFocalPoint =
+                Offset(
+              centerX,
+              centerY,
+            );
+          });
         },
-        onPanUpdate:
-            (details) {
-          setState(
-            () {
-              _dragFocalPoint =
-                  (_dragFocalPoint ??
-                          Offset(
-                            centerX,
-                            centerY,
-                          )) +
-                      details.delta;
-            },
-          );
+        onPanUpdate: (details) {
+          setState(() {
+            _dragFocalPoint =
+                (_dragFocalPoint ??
+                        Offset(
+                          centerX,
+                          centerY,
+                        )) +
+                    details.delta;
+          });
 
           onDelta(
-            details.delta.dx /
-                iw,
-            details.delta.dy /
-                ih,
+            details.delta.dx / iw,
+            details.delta.dy / ih,
           );
         },
         onPanEnd: (_) {
-          setState(
-            () {
-              _dragFocalPoint =
-                  null;
-            },
-          );
+          setState(() {
+            _dragFocalPoint = null;
+          });
         },
-        child:
-            Container(
+        child: Container(
           width: 28,
           height: 28,
           alignment:
               Alignment.center,
-          child:
-              Container(
+          child: Container(
             width:
-                isHorizontal
-                    ? 26
-                    : 10,
+                isHorizontal ? 26 : 10,
             height:
-                isHorizontal
-                    ? 10
-                    : 26,
+                isHorizontal ? 10 : 26,
             decoration:
                 BoxDecoration(
-              color:
-                  Colors.white,
+              color: Colors.white,
               borderRadius:
-                  BorderRadius
-                      .circular(
+                  BorderRadius.circular(
                 5,
               ),
-              border:
-                  Border.all(
+              border: Border.all(
                 color:
                     const Color(
                   0xFF0284C7,
@@ -2658,10 +1992,8 @@ class _CropScreenState
               ),
               boxShadow: const [
                 BoxShadow(
-                  color:
-                      Colors.black45,
-                  blurRadius:
-                      3,
+                  color: Colors.black45,
+                  blurRadius: 3,
                 ),
               ],
             ),
@@ -2686,14 +2018,11 @@ class _CropScreenState
       return const SizedBox.shrink();
     }
 
-    const double lensSize =
-        110;
-
+    const double lensSize = 110;
     const double zoom = 2.5;
 
     final localX =
         focus.dx - il;
-
     final localY =
         focus.dy - it;
 
@@ -2728,62 +2057,45 @@ class _CropScreenState
       top: top,
       child: IgnorePointer(
         child: Container(
-          width:
-              lensSize,
-          height:
-              lensSize,
+          width: lensSize,
+          height: lensSize,
           decoration:
               BoxDecoration(
             shape:
                 BoxShape.circle,
-            border:
-                Border.all(
-              color:
-                  Colors.white,
+            border: Border.all(
+              color: Colors.white,
               width: 3,
             ),
             boxShadow: const [
               BoxShadow(
-                color:
-                    Colors.black54,
-                blurRadius:
-                    8,
+                color: Colors.black54,
+                blurRadius: 8,
               ),
             ],
           ),
-          child:
-              ClipOval(
-            child:
-                Stack(
+          child: ClipOval(
+            child: Stack(
               children: [
                 Positioned(
                   left:
-                      lensSize /
-                              2 -
-                          localX *
-                              zoom,
+                      lensSize / 2 -
+                          localX * zoom,
                   top:
-                      lensSize /
-                              2 -
-                          localY *
-                              zoom,
-                  width:
-                      iw * zoom,
-                  height:
-                      ih * zoom,
+                      lensSize / 2 -
+                          localY * zoom,
+                  width: iw * zoom,
+                  height: ih * zoom,
                   child:
                       Image.memory(
                     _displayBytes,
-                    fit:
-                        BoxFit.fill,
+                    fit: BoxFit.fill,
                   ),
                 ),
                 Center(
-                  child:
-                      Container(
+                  child: Container(
                     width: 2,
-                    height:
-                        16,
+                    height: 16,
                     color:
                         const Color(
                       0xFF0284C7,
@@ -2791,10 +2103,8 @@ class _CropScreenState
                   ),
                 ),
                 Center(
-                  child:
-                      Container(
-                    width:
-                        16,
+                  child: Container(
+                    width: 16,
                     height: 2,
                     color:
                         const Color(
@@ -2827,60 +2137,55 @@ class _CropScreenState
           il + rx * iw - 18,
       top:
           it + ry * ih - 18,
-      child:
-          GestureDetector(
+      child: GestureDetector(
         onPanStart: (_) {
-          setState(
-            () {
-              _dragFocalPoint =
-                  Offset(
-                il + rx * iw,
-                it + ry * ih,
-              );
-            },
-          );
+          setState(() {
+            _dragFocalPoint =
+                Offset(
+              il + rx * iw,
+              it + ry * ih,
+            );
+          });
         },
-        onPanUpdate:
-            (details) {
+        onPanUpdate: (details) {
           final currentX =
               il + rx * iw;
-
           final currentY =
               it + ry * ih;
 
           final newX =
               ((currentX +
-                          details
-                              .delta
-                              .dx -
-                      il) /
-                  iw).clamp(
+                              details
+                                  .delta
+                                  .dx -
+                          il) /
+                      iw)
+                  .clamp(
                 0.0,
                 1.0,
               );
 
           final newY =
               ((currentY +
-                          details
-                              .delta
-                              .dy -
-                      it) /
-                  ih).clamp(
+                              details
+                                  .delta
+                                  .dy -
+                          it) /
+                      ih)
+                  .clamp(
                 0.0,
                 1.0,
               );
 
-          setState(
-            () {
-              _dragFocalPoint =
-                  (_dragFocalPoint ??
-                          Offset(
-                            currentX,
-                            currentY,
-                          )) +
-                      details.delta;
-            },
-          );
+          setState(() {
+            _dragFocalPoint =
+                (_dragFocalPoint ??
+                        Offset(
+                          currentX,
+                          currentY,
+                        )) +
+                    details.delta;
+          });
 
           onMove(
             newX,
@@ -2888,15 +2193,11 @@ class _CropScreenState
           );
         },
         onPanEnd: (_) {
-          setState(
-            () {
-              _dragFocalPoint =
-                  null;
-            },
-          );
+          setState(() {
+            _dragFocalPoint = null;
+          });
         },
-        child:
-            Container(
+        child: Container(
           width: 36,
           height: 36,
           decoration:
@@ -2904,33 +2205,24 @@ class _CropScreenState
             color:
                 const Color(
               0xFF0284C7,
-            ).withAlpha(
-              230,
-            ),
+            ).withAlpha(230),
             shape:
                 BoxShape.circle,
-            border:
-                Border.all(
-              color:
-                  Colors.white,
+            border: Border.all(
+              color: Colors.white,
               width: 2,
             ),
             boxShadow: const [
               BoxShadow(
-                color:
-                    Colors.black45,
-                blurRadius:
-                    4,
+                color: Colors.black45,
+                blurRadius: 4,
               ),
             ],
           ),
-          child:
-              const Icon(
-            Icons
-                .control_camera,
+          child: const Icon(
+            Icons.control_camera,
             size: 16,
-            color:
-                Colors.white,
+            color: Colors.white,
           ),
         ),
       ),
