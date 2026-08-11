@@ -1,184 +1,167 @@
-class CropScreen extends StatefulWidget {
-  final Uint8List imageBytes;
+import 'dart:typed_data';
 
-  const CropScreen({
-    super.key,
-    required this.imageBytes,
-  });
+import 'package:flutter/foundation.dart';
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-  @override
-  State<CropScreen> createState() => _CropScreenState();
+class ImageUtils {
+  static cv.Mat? decodeBytes(Uint8List bytes) {
+    try {
+      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
+
+      if (mat.isEmpty) {
+        return null;
+      }
+
+      return mat;
+    } catch (e) {
+      debugPrint('OpenCV decode error: $e');
+      return null;
+    }
+  }
+
+  static Uint8List encodeJpg(
+    cv.Mat image, {
+    int quality = 95,
+  }) {
+    try {
+      if (image.isEmpty) {
+        return Uint8List(0);
+      }
+
+      final result = cv.imencode(
+        '.jpg',
+        image,
+        params: cv.VecI32.fromList([
+          cv.IMWRITE_JPEG_QUALITY,
+          quality,
+        ]),
+      );
+
+      return result.$2;
+    } catch (e) {
+      debugPrint('OpenCV encode error: $e');
+      return Uint8List(0);
+    }
+  }
 }
 
-class _CropScreenState extends State<CropScreen> {
-  double _x1 = 0.05;
-  double _y1 = 0.05;
+enum EnhanceMode {
+  none,
+  soft,
+  bw,
+}
 
-  double _x2 = 0.95;
-  double _y2 = 0.05;
-
-  double _x3 = 0.95;
-  double _y3 = 0.95;
-
-  double _x4 = 0.05;
-  double _y4 = 0.95;
-
-  EnhanceMode _filter = EnhanceMode.none;
-
-  late Uint8List _displayBytes;
-
-  int _imgWidth = 100;
-  int _imgHeight = 100;
-
-  Offset? _dragFocalPoint;
-
-  bool _isDetecting = false;
-  bool _isProcessing = false;
-
-  @override
-  void initState() {
-    super.initState();
-
-    // مهم جداً:
-    // نعرض الصورة الأصلية مباشرة بدون إعادة ترميزها.
-    _displayBytes = widget.imageBytes;
-
-    _initializeDimensions();
-  }
-
-  void _initializeDimensions() {
-    final mat = ImageUtils.decodeBytes(widget.imageBytes);
-
-    if (mat == null || mat.isEmpty) {
-      return;
+class ImageEnhancer {
+  static cv.Mat apply(
+    cv.Mat source,
+    EnhanceMode mode,
+  ) {
+    if (source.isEmpty) {
+      return source;
     }
 
-    if (!mounted) return;
+    switch (mode) {
+      case EnhanceMode.none:
+        return source.clone();
 
-    setState(() {
-      _imgWidth = mat.cols;
-      _imgHeight = mat.rows;
-    });
+      case EnhanceMode.soft:
+        try {
+          return source.convertTo(
+            source.type,
+            alpha: 1.1,
+            beta: 10,
+          );
+        } catch (e) {
+          debugPrint('Soft enhancement error: $e');
+          return source.clone();
+        }
+
+      case EnhanceMode.bw:
+        try {
+          final gray = cv.cvtColor(
+            source,
+            cv.COLOR_BGR2GRAY,
+          );
+
+          return gray.convertTo(
+            gray.type,
+            alpha: 1.5,
+            beta: 20,
+          );
+        } catch (e) {
+          debugPrint('B&W enhancement error: $e');
+          return source.clone();
+        }
+    }
   }
+}
 
-  // ============================================================
-  // الفلاتر
-  // ============================================================
-
-  Future<void> _applyFilter(EnhanceMode mode) async {
-    if (_isProcessing) return;
-
-    setState(() {
-      _filter = mode;
-    });
-
-    // الأصلي = نرجع للصورة الأصلية بدون OpenCV
-    if (mode == EnhanceMode.none) {
-      if (!mounted) return;
-
-      setState(() {
-        _displayBytes = widget.imageBytes;
-      });
-
-      return;
+class ManualCrop {
+  static cv.Mat? cropPerspective(
+    cv.Mat source,
+    double x1,
+    double y1,
+    double x2,
+    double y2,
+    double x3,
+    double y3,
+    double x4,
+    double y4,
+  ) {
+    if (source.isEmpty) {
+      return null;
     }
 
-    setState(() {
-      _isProcessing = true;
-    });
+    final w = source.cols.toDouble();
+    final h = source.rows.toDouble();
+
+    final srcPts = [
+      cv.Point2f(x1 * w, y1 * h),
+      cv.Point2f(x2 * w, y2 * h),
+      cv.Point2f(x3 * w, y3 * h),
+      cv.Point2f(x4 * w, y4 * h),
+    ];
+
+    final dstPts = [
+      cv.Point2f(0, 0),
+      cv.Point2f(w - 1, 0),
+      cv.Point2f(w - 1, h - 1),
+      cv.Point2f(0, h - 1),
+    ];
 
     try {
-      final mat = ImageUtils.decodeBytes(widget.imageBytes);
-
-      if (mat == null || mat.isEmpty) {
-        throw Exception('تعذر قراءة الصورة');
-      }
-
-      final processed = ImageEnhancer.apply(
-        mat,
-        mode,
+      final matrix = cv.getPerspectiveTransform2f(
+        srcPts.cvd,
+        dstPts.cvd,
       );
 
-      final bytes = ImageUtils.encodeJpg(
-        processed,
-        quality: 95,
+      return cv.warpPerspective(
+        source,
+        matrix,
+        (source.cols, source.rows),
       );
-
-      // إذا فشل OpenCV، لا نخلي الشاشة سوداء
-      if (bytes.isEmpty) {
-        throw Exception('فشل تحويل الصورة');
-      }
-
-      if (!mounted) return;
-
-      setState(() {
-        _displayBytes = bytes;
-      });
     } catch (e) {
-      debugPrint('Filter error: $e');
-
-      if (!mounted) return;
-
-      // نرجع للصورة الأصلية
-      setState(() {
-        _displayBytes = widget.imageBytes;
-        _filter = EnhanceMode.none;
-      });
-
-      _showSnack('تعذر تطبيق التحسين');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
-      }
+      debugPrint('Perspective Crop error: $e');
+      return source.clone();
     }
   }
+}
 
-  // ============================================================
-  // تحديد كامل الصورة
-  // ============================================================
+class SmartCrop {
+  static List<double>? detectCorners(cv.Mat source) {
+    if (source.isEmpty) {
+      return null;
+    }
 
-  void _selectAll() {
-    setState(() {
-      _x1 = 0.0;
-      _y1 = 0.0;
-
-      _x2 = 1.0;
-      _y2 = 0.0;
-
-      _x3 = 1.0;
-      _y3 = 1.0;
-
-      _x4 = 0.0;
-      _y4 = 1.0;
-    });
+    return [
+      0.05,
+      0.05,
+      0.95,
+      0.05,
+      0.95,
+      0.95,
+      0.05,
+      0.95,
+    ];
   }
-
-  // ============================================================
-  // القص التلقائي
-  // ============================================================
-
-  Future<void> _runAutoDetect() async {
-    if (_isDetecting || _isProcessing) return;
-
-    setState(() {
-      _isDetecting = true;
-    });
-
-    try {
-      final mat = ImageUtils.decodeBytes(
-        widget.imageBytes,
-      );
-
-      if (mat == null || mat.isEmpty) {
-        throw Exception('الصورة غير صالحة');
-      }
-
-      final corners = SmartCrop.detectCorners(mat);
-
-      if (corners != null && corners.length == 8) {
-        if (!mounted) return;
-
-        setState(() {
-          _x1 = corners[
+}
