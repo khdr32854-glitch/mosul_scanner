@@ -1,325 +1,141 @@
-import 'dart:math' as math;
-
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
-import 'package:image/image.dart' as img;
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 /// ===============================================================
-/// MOSUL SCANNER - CROP ENGINE
+/// MOSUL SCANNER - CROP ENGINE (OPENCV EDITION)
 /// ===============================================================
-///
-/// المسؤول عن:
-/// 1. تشغيل Google ML Kit Document Scanner
-/// 2. استلام مسارات الصور الناتجة
-/// 3. معالجة الصور
-/// 4. القص اليدوي
-/// 5. تحسين الصورة
-///
-/// Google ML Kit Document Scanner 0.5.0
-/// ===============================================================
-
-/// ===============================================================
-/// 1. GOOGLE DOCUMENT SCANNER
-/// ===============================================================
-
-class GoogleScanner {
-  static Future<List<String>?> scan({
-    int pageLimit = 10,
-    bool allowGallery = false,
-  }) async {
-    final options = DocumentScannerOptions(
-      documentFormats: const {
-        DocumentFormat.jpeg,
-      },
-      mode: ScannerMode.full,
-      pageLimit: pageLimit,
-      isGalleryImport: allowGallery,
-    );
-
-    final scanner = DocumentScanner(
-      options: options,
-    );
-
-    try {
-      debugPrint('MOSUL SCANNER: Opening Google Document Scanner');
-
-      final result = await scanner.scanDocument();
-
-      final images = result.images;
-
-      debugPrint(
-        'MOSUL SCANNER: Google returned '
-        '${images?.length ?? 0} image(s)',
-      );
-
-      return images;
-    } catch (e, stackTrace) {
-      debugPrint('==========================================');
-      debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
-      debugPrint('$e');
-      debugPrint('$stackTrace');
-      debugPrint('==========================================');
-
-      return null;
-    } finally {
-      try {
-        await scanner.close();
-      } catch (e) {
-        debugPrint('Google Scanner close error: $e');
-      }
-    }
-  }
-}
-
-/// ===============================================================
-/// 2. IMAGE UTILITIES
+/// يعتمد هذا المحرك حصرياً على opencv_dart لمعالجة الصور بسرعة عالية
 /// ===============================================================
 
 class ImageUtils {
-  static img.Image? decodeBytes(Uint8List bytes) {
+  /// تحويل الصورة من بايتات (من الاستوديو أو الكاميرا) إلى مصفوفة OpenCV
+  static cv.Mat? decodeBytes(Uint8List bytes) {
     try {
-      return img.decodeImage(bytes);
+      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
+      if (mat.isEmpty) return null;
+      return mat;
     } catch (e) {
-      debugPrint('Image decode error: $e');
+      debugPrint('MOSUL SCANNER OpenCV decode error: $e');
       return null;
     }
   }
 
-  static Uint8List encodeJpg(
-    img.Image image, {
-    int quality = 92,
-  }) {
+  /// تحويل الصورة من مصفوفة OpenCV إلى بايتات لعرضها في الواجهة
+  static Uint8List encodeJpg(cv.Mat image, {int quality = 95}) {
     try {
-      return Uint8List.fromList(
-        img.encodeJpg(
-          image,
-          quality: quality,
-        ),
-      );
+      if (image.isEmpty) return Uint8List(0);
+      final result = cv.imencode('.jpg', image, params: [cv.IMWRITE_JPEG_QUALITY, quality]);
+      // opencv_dart تُرجع قيمة (success, bytes)
+      return result.$2; 
     } catch (e) {
-      debugPrint('Image encode error: $e');
+      debugPrint('MOSUL SCANNER OpenCV encode error: $e');
       return Uint8List(0);
     }
   }
-
-  static bool isValid(img.Image? image) {
-    return image != null &&
-        image.width >= 10 &&
-        image.height >= 10;
-  }
 }
 
 /// ===============================================================
-/// 3. CROP RESULT
+/// IMAGE ENHANCER (فلاتر التحسين)
 /// ===============================================================
 
-class CropResult {
-  final img.Image image;
-  final bool changed;
-  final double confidence;
-
-  const CropResult({
-    required this.image,
-    required this.changed,
-    required this.confidence,
-  });
-}
-
-/// ===============================================================
-/// 4. IMAGE ENHANCER
-/// ===============================================================
-
-enum EnhanceMode {
-  none,
-  soft,
-  bw,
-}
+enum EnhanceMode { none, soft, bw }
 
 class ImageEnhancer {
-  static img.Image apply(
-    img.Image source,
-    EnhanceMode mode,
-  ) {
-    final image = img.Image.from(source);
+  static cv.Mat apply(cv.Mat source, EnhanceMode mode) {
+    if (source.isEmpty) return source;
 
     switch (mode) {
       case EnhanceMode.none:
-        return image;
+        return source.clone();
 
       case EnhanceMode.soft:
         try {
-          return img.adjustColor(
-            image,
-            contrast: 1.12,
-            brightness: 1.04,
-            saturation: 1.03,
-          );
+          // زيادة التباين والإضاءة بشكل احترافي
+          final result = cv.Mat.empty();
+          source.convertTo(result, -1, alpha: 1.1, beta: 10);
+          return result;
         } catch (e) {
-          debugPrint('Soft enhancement error: $e');
-          return image;
+          return source;
         }
 
       case EnhanceMode.bw:
         try {
-          final gray = img.grayscale(image);
-
-          return img.adjustColor(
-            gray,
-            contrast: 1.22,
-            brightness: 1.03,
-          );
+          // تحويل الصورة لأبيض وأسود عالي التباين (للمستندات)
+          final gray = cv.cvtColor(source, cv.COLOR_BGR2GRAY);
+          final result = cv.Mat.empty();
+          gray.convertTo(result, -1, alpha: 1.5, beta: 20);
+          return result;
         } catch (e) {
-          debugPrint('BW enhancement error: $e');
-          return image;
+          return source;
         }
     }
   }
 }
 
 /// ===============================================================
-/// 5. MANUAL CROP
-/// ===============================================================
-///
-/// الإحداثيات normalized:
-/// 0.0 = بداية الصورة
-/// 1.0 = نهاية الصورة
-///
-/// ترتيب النقاط:
-/// 1 = أعلى يسار
-/// 2 = أعلى يمين
-/// 3 = أسفل يمين
-/// 4 = أسفل يسار
-///
-/// ملاحظة:
-/// هذه النسخة تنفذ قص المستطيل المحيط بالنقاط.
+/// MANUAL CROP (قص حقيقي مع تصحيح المنظور)
 /// ===============================================================
 
 class ManualCrop {
-  static img.Image cropPerspective(
-    img.Image source,
-    double x1,
-    double y1,
-    double x2,
-    double y2,
-    double x3,
-    double y3,
-    double x4,
-    double y4,
+  static cv.Mat? cropPerspective(
+    cv.Mat source,
+    double x1, double y1, // أعلى يسار
+    double x2, double y2, // أعلى يمين
+    double x3, double y3, // أسفل يمين
+    double x4, double y4, // أسفل يسار
   ) {
-    if (!ImageUtils.isValid(source)) {
-      return img.Image.from(source);
+    if (source.isEmpty) return null;
+
+    final w = source.cols.toDouble();
+    final h = source.rows.toDouble();
+
+    // تحديد النقاط الأصلية للصورة المحددة
+    final srcPts = [
+      cv.Point2f(x1 * w, y1 * h),
+      cv.Point2f(x2 * w, y2 * h),
+      cv.Point2f(x3 * w, y3 * h),
+      cv.Point2f(x4 * w, y4 * h),
+    ];
+
+    // تحديد أبعاد الصورة الجديدة بعد القص (لتبدو كورقة مستقيمة)
+    final dstPts = [
+      cv.Point2f(0, 0),
+      cv.Point2f(w, 0),
+      cv.Point2f(w, h),
+      cv.Point2f(0, h),
+    ];
+
+    try {
+      // حساب مصفوفة التحويل (Perspective Transform)
+      final matrix = cv.getPerspectiveTransform2f(srcPts.cvd, dstPts.cvd);
+      
+      // تطبيق القص والتعديل
+      final result = cv.warpPerspective(source, matrix, cv.Size(source.cols, source.rows));
+      return result;
+    } catch (e) {
+      debugPrint('MOSUL SCANNER Perspective Crop error: $e');
+      return source.clone();
     }
-
-    final w = source.width.toDouble();
-    final h = source.height.toDouble();
-
-    final valuesX = <double>[
-      x1,
-      x2,
-      x3,
-      x4,
-    ];
-
-    final valuesY = <double>[
-      y1,
-      y2,
-      y3,
-      y4,
-    ];
-
-    final minNormalizedX =
-        valuesX.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedX =
-        valuesX.reduce(math.max).clamp(0.0, 1.0);
-
-    final minNormalizedY =
-        valuesY.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedY =
-        valuesY.reduce(math.max).clamp(0.0, 1.0);
-
-    int minX = (minNormalizedX * w).round();
-    int maxX = (maxNormalizedX * w).round();
-
-    int minY = (minNormalizedY * h).round();
-    int maxY = (maxNormalizedY * h).round();
-
-    minX = minX.clamp(0, source.width - 1);
-    minY = minY.clamp(0, source.height - 1);
-
-    maxX = maxX.clamp(minX + 1, source.width);
-    maxY = maxY.clamp(minY + 1, source.height);
-
-    final cropWidth =
-        math.max(10, maxX - minX);
-
-    final cropHeight =
-        math.max(10, maxY - minY);
-
-    return img.copyCrop(
-      source,
-      x: minX,
-      y: minY,
-      width: cropWidth,
-      height: cropHeight,
-    );
   }
 }
 
 /// ===============================================================
-/// 6. SMART CROP FALLBACK
+/// SMART CROP (التعرف التلقائي على الحواف)
 /// ===============================================================
 
 class SmartCrop {
-  static CropResult detect(
-    img.Image source,
-  ) {
-    if (!ImageUtils.isValid(source)) {
-      return CropResult(
-        image: img.Image.from(source),
-        changed: false,
-        confidence: 0.0,
-      );
-    }
+  /// ترجع الإحداثيات التقريبية لحواف الورقة
+  static List<double>? detectCorners(cv.Mat source) {
+    if (source.isEmpty) return null;
 
-    const margin = 0.01;
-
-    final cropped = ManualCrop.cropPerspective(
-      source,
-      margin,
-      margin,
-      1.0 - margin,
-      margin,
-      1.0 - margin,
-      1.0 - margin,
-      margin,
-      1.0 - margin,
-    );
-
-    return CropResult(
-      image: cropped,
-      changed: true,
-      confidence: 0.85,
-    );
-  }
-
-  static List<double>? detectCorners(
-    img.Image source,
-  ) {
-    if (!ImageUtils.isValid(source)) {
-      return null;
-    }
-
-    return const [
-      0.05,
-      0.05,
-      0.95,
-      0.05,
-      0.95,
-      0.95,
-      0.05,
-      0.95,
+    // في هذه المرحلة، نضع إحداثيات مبدئية ممتازة لقص المستند
+    // (لاحقاً يمكننا إضافة كود Canny Edge Detection للبحث عن الورقة آلياً)
+    return [
+      0.05, 0.05, // أعلى يسار
+      0.95, 0.05, // أعلى يمين
+      0.95, 0.95, // أسفل يمين
+      0.05, 0.95, // أسفل يسار
     ];
   }
 }
