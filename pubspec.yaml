@@ -1,23 +1,35 @@
 name: mosul_scanner
-description: Mosul Scanner App
+description: "Mosul Scanner - نظام مسح وطباعة المستندات الاحترافي"
 publish_to: "none"
-
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.8.0 <4.0.0"
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  image_picker: ^1.0.7
-  image: ^4.1.7
+  # واجهة الأيقونات الافتراضية من Flutter
+  cupertino_icons: ^1.0.6
 
-  pdf: ^3.10.8
+  # اختيار الصور من الكاميرا/المعرض
+  image_picker: ^0.8.7
+
+  # معالجة الصور (تدوير، قص، تحسين، ترميز JPEG)
+  image: ^4.0.17
+
+  # ماسح المستندات الجاهز من Google ML Kit (أندرويد فقط)
+  google_mlkit_document_scanner: ^0.4.0
+
+  # بناء وتصدير ملفات PDF
+  pdf: ^3.10.7
+
+  # الطباعة ومعاينة PDF
   printing: ^5.11.1
 
-  google_mlkit_document_scanner: ^0.5.0
+  # كشف حواف المستند تلقائياً (Canny + Contours) - يتطلب NDK/C++
+  opencv_dart: ^1.4.5
 
 dev_dependencies:
   flutter_test:
