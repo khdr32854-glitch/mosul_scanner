@@ -468,8 +468,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     }
   }
 
-  void _addDecodedImage({
-    required img.Image decodedImage,
+  // التعديل هنا: إزالة {} حول decodedImage ليصبح Parameter مباشر
+  void _addDecodedImage(
+    img.Image decodedImage, {
     bool isPhoto = false,
     bool curved = false,
   }) {
@@ -1275,7 +1276,7 @@ class _CropScreenState extends State<CropScreen> {
                       height: imgH,
                       child: Image.memory(
                         _displayBytes,
-                        key: ValueKey(_displayBytes.hashCode), // التعديل الثاني: إجبار تحديث الذاكرة
+                        key: ValueKey(_displayBytes.hashCode), // إجبار تحديث الذاكرة عند تغيير الفلتر
                         fit: BoxFit.fill,
                         errorBuilder: (context, error, stackTrace) {
                           return Container(
