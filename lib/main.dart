@@ -29,7 +29,8 @@ class ImageUtils {
   static Uint8List encodeJpg(cv.Mat image, {int quality = 95}) {
     try {
       if (image.isEmpty) return Uint8List(0);
-      final result = cv.imencode('.jpg', image, params: [cv.IMWRITE_JPEG_QUALITY, quality]);
+      // تم الإصلاح 1: استخدام cv.VecI32.fromList
+      final result = cv.imencode('.jpg', image, params: cv.VecI32.fromList([cv.IMWRITE_JPEG_QUALITY, quality]));
       return result.$2; 
     } catch (e) {
       debugPrint('MOSUL SCANNER OpenCV encode error: $e');
@@ -50,9 +51,8 @@ class ImageEnhancer {
 
       case EnhanceMode.soft:
         try {
-          final result = cv.Mat.empty();
-          source.convertTo(result, -1, alpha: 1.1, beta: 10);
-          return result;
+          // تم الإصلاح 2: convertTo ترجع القيمة مباشرة
+          return source.convertTo(-1, alpha: 1.1, beta: 10);
         } catch (e) {
           return source;
         }
@@ -60,9 +60,8 @@ class ImageEnhancer {
       case EnhanceMode.bw:
         try {
           final gray = cv.cvtColor(source, cv.COLOR_BGR2GRAY);
-          final result = cv.Mat.empty();
-          gray.convertTo(result, -1, alpha: 1.5, beta: 20);
-          return result;
+          // تم الإصلاح 3
+          return gray.convertTo(-1, alpha: 1.5, beta: 20);
         } catch (e) {
           return source;
         }
@@ -99,7 +98,8 @@ class ManualCrop {
 
     try {
       final matrix = cv.getPerspectiveTransform2f(srcPts.cvd, dstPts.cvd);
-      final result = cv.warpPerspective(source, matrix, cv.Size(source.cols, source.rows));
+      // تم الإصلاح 4: استخدام Record (cols, rows) بدلاً من cv.Size
+      final result = cv.warpPerspective(source, matrix, (source.cols, source.rows));
       return result;
     } catch (e) {
       debugPrint('MOSUL SCANNER Perspective Crop error: $e');
