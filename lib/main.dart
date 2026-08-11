@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
@@ -10,119 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-/// ===============================================================
-/// 1. CROP ENGINE CLASSES (مدمجة هنا لتجنب أخطاء الملفات)
-/// ===============================================================
-
-class ImageUtils {
-  static cv.Mat? decodeBytes(Uint8List bytes) {
-    try {
-      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
-      if (mat.isEmpty) return null;
-      return mat;
-    } catch (e) {
-      debugPrint('MOSUL SCANNER OpenCV decode error: $e');
-      return null;
-    }
-  }
-
-  static Uint8List encodeJpg(cv.Mat image, {int quality = 95}) {
-    try {
-      if (image.isEmpty) return Uint8List(0);
-      // تم الإصلاح 1: استخدام cv.VecI32.fromList
-      final result = cv.imencode('.jpg', image, params: cv.VecI32.fromList([cv.IMWRITE_JPEG_QUALITY, quality]));
-      return result.$2; 
-    } catch (e) {
-      debugPrint('MOSUL SCANNER OpenCV encode error: $e');
-      return Uint8List(0);
-    }
-  }
-}
-
-enum EnhanceMode { none, soft, bw }
-
-class ImageEnhancer {
-  static cv.Mat apply(cv.Mat source, EnhanceMode mode) {
-    if (source.isEmpty) return source;
-
-    switch (mode) {
-      case EnhanceMode.none:
-        return source.clone();
-
-      case EnhanceMode.soft:
-        try {
-          // تم الإصلاح 2: convertTo ترجع القيمة مباشرة
-          return source.convertTo(-1, alpha: 1.1, beta: 10);
-        } catch (e) {
-          return source;
-        }
-
-      case EnhanceMode.bw:
-        try {
-          final gray = cv.cvtColor(source, cv.COLOR_BGR2GRAY);
-          // تم الإصلاح 3
-          return gray.convertTo(-1, alpha: 1.5, beta: 20);
-        } catch (e) {
-          return source;
-        }
-    }
-  }
-}
-
-class ManualCrop {
-  static cv.Mat? cropPerspective(
-    cv.Mat source,
-    double x1, double y1, 
-    double x2, double y2, 
-    double x3, double y3, 
-    double x4, double y4, 
-  ) {
-    if (source.isEmpty) return null;
-
-    final w = source.cols.toDouble();
-    final h = source.rows.toDouble();
-
-    final srcPts = [
-      cv.Point2f(x1 * w, y1 * h),
-      cv.Point2f(x2 * w, y2 * h),
-      cv.Point2f(x3 * w, y3 * h),
-      cv.Point2f(x4 * w, y4 * h),
-    ];
-
-    final dstPts = [
-      cv.Point2f(0, 0),
-      cv.Point2f(w, 0),
-      cv.Point2f(w, h),
-      cv.Point2f(0, h),
-    ];
-
-    try {
-      final matrix = cv.getPerspectiveTransform2f(srcPts.cvd, dstPts.cvd);
-      // تم الإصلاح 4: استخدام Record (cols, rows) بدلاً من cv.Size
-      final result = cv.warpPerspective(source, matrix, (source.cols, source.rows));
-      return result;
-    } catch (e) {
-      debugPrint('MOSUL SCANNER Perspective Crop error: $e');
-      return source.clone();
-    }
-  }
-}
-
-class SmartCrop {
-  static List<double>? detectCorners(cv.Mat source) {
-    if (source.isEmpty) return null;
-    return [
-      0.05, 0.05, 
-      0.95, 0.05, 
-      0.95, 0.95, 
-      0.05, 0.95, 
-    ];
-  }
-}
-
-/// ===============================================================
-/// 2. MOSUL SCANNER - PROFESSIONAL EDITION
-/// ===============================================================
+import 'crop_engine.dart'; // استدعاء المحرك المعزول هنا بأمان تام
 
 class GoogleScanner {
   static Future<List<String>?> scan() async {
@@ -162,10 +49,7 @@ class MosulScannerApp extends StatelessWidget {
     return MaterialApp(
       title: 'Mosul Scanner Pro',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.blueGrey,
-      ),
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blueGrey),
       home: const MainScannerScreen(),
     );
   }
@@ -353,7 +237,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   void _resizeActiveItem(double width, double height, {bool isPhoto = false, bool curved = false}) {
     final active = _activeItem;
     if (active == null) return;
-
     setState(() {
       active.widthMm = width;
       active.heightMm = height;
@@ -365,7 +248,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   void _rotateActiveItem() {
     final active = _activeItem;
     if (active == null) return;
-
     setState(() {
       active.rotationAngle = (active.rotationAngle + 90) % 360;
       active.applyRotation();
@@ -375,7 +257,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   void _duplicateActiveItem() {
     final source = _activeItem;
     if (source == null) return;
-
     setState(() {
       final duplicate = DocumentItem(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -433,7 +314,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   void _deleteActiveItem() {
     final active = _activeItem;
     if (active == null) return;
-
     setState(() {
       _items.remove(active);
       _activeItem = _items.isEmpty ? null : _items.last;
@@ -507,11 +387,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         backgroundColor: const Color(0xFF1E293B),
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            tooltip: 'طباعة المستندات',
-            icon: const Icon(Icons.print_outlined),
-            onPressed: _exportAndPrint,
-          ),
+          IconButton(tooltip: 'طباعة المستندات', icon: const Icon(Icons.print_outlined), onPressed: _exportAndPrint),
           IconButton(
             tooltip: 'ماسح Google الذكي',
             icon: _isScanning
@@ -519,11 +395,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 : const Icon(Icons.document_scanner),
             onPressed: _isScanning ? null : _openGoogleScanner,
           ),
-          IconButton(
-            tooltip: 'استيراد من المعرض',
-            icon: const Icon(Icons.photo_library_outlined),
-            onPressed: () => _addManualImages(ImageSource.gallery),
-          ),
+          IconButton(tooltip: 'استيراد من المعرض', icon: const Icon(Icons.photo_library_outlined), onPressed: () => _addManualImages(ImageSource.gallery)),
         ],
       ),
       body: Column(
@@ -557,11 +429,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         width: double.infinity,
                         color: const Color(0xFF0F172A),
-                        child: const Text(
-                          'المقاسات القياسية',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
+                        child: const Text('المقاسات القياسية', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                       Expanded(
                         child: ListView(
