@@ -1935,23 +1935,14 @@ class _CropScreenState
       _filterIntensity,
     );
 
-    // نستخدم PNG بدل JPEG لعرض المعاينة داخل شاشة القص فقط.
-    // مرمّز JPEG الخاص بمكتبة image (Dart) أثبت (بالتشخيص) أنه
-    // ينتج أحياناً ملفات JPEG تفشل صامتة عند فك تشفيرها بمحرك
-    // Skia داخل Flutter رغم أن بياناتها سليمة، بينما PNG (بلا فقدان)
-    // أكثر موثوقية لهذا الغرض. الترميز النهائي للتصدير/الطباعة
-    // ما زال يستخدم JPEG بمكان تاني بدون تغيير.
-    try {
-      _displayBytes = Uint8List.fromList(
-        img.encodePng(processed),
-      );
-    } catch (e) {
-      debugPrint('PNG encode error: $e');
-      _displayBytes = ImageUtils.encodeJpg(
-        processed,
-        quality: 92,
-      );
-    }
+    // نستخدم encodeJpg الآمن (الذي يحوّل RGBA→RGB قبل الترميز)
+    // بدل encodePng لأن بعض إصدارات مكتبة image تنتج PNG بصيغة
+    // لا يتعرف عليها محرك Skia في Flutter بشكل صحيح، مما يؤدي
+    // إلى شاشة سوداء رغم أن بيانات الصورة سليمة.
+    _displayBytes = ImageUtils.encodeJpg(
+      processed,
+      quality: 92,
+    );
 
     _updateDebugInfo(processed);
   }
