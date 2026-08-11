@@ -97,7 +97,72 @@ jobs:
 
 
       # =========================================================
-      # 6. حذف اختبار Flutter الافتراضي
+      # 6. رفع compileSdk لـ 36 (يتطلبها opencv_dart >= 34)
+      #
+      # الملف android/app/build.gradle(.kts) يتولّد تلقائياً من
+      # الخطوة السابقة (flutter create) ولا يُحفظ بالريبو، لذلك
+      # يجب تعديله هنا بكل تشغيل بعد إنشائه مباشرة.
+      # =========================================================
+      - name: Configure Android SDK Levels
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+
+          gradle_file = next(
+              (p for p in candidates if p.exists()), None
+          )
+
+          if gradle_file is None:
+              raise SystemExit(
+                  "android/app/build.gradle(.kts) not found"
+              )
+
+          text = gradle_file.read_text()
+          original = text
+
+          replacements = [
+              (
+                  "compileSdk = flutter.compileSdkVersion",
+                  "compileSdk = 36",
+              ),
+              (
+                  "compileSdkVersion flutter.compileSdkVersion",
+                  "compileSdkVersion 36",
+              ),
+              (
+                  "compileSdk flutter.compileSdkVersion",
+                  "compileSdk 36",
+              ),
+          ]
+
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new)
+
+          if text == original:
+              print(
+                  "WARNING: no known compileSdk pattern matched, "
+                  "printing file for manual inspection:"
+              )
+              print(text)
+              raise SystemExit(
+                  "compileSdk pattern not found in "
+                  + str(gradle_file)
+              )
+
+          gradle_file.write_text(text)
+
+          print(f"compileSdk updated to 36 in {gradle_file}")
+          PY
+
+
+      # =========================================================
+      # 7. حذف اختبار Flutter الافتراضي
       # =========================================================
       - name: Remove Default Flutter Test
         run: |
@@ -113,7 +178,7 @@ jobs:
 
 
       # =========================================================
-      # 7. إضافة صلاحية الكاميرا
+      # 8. إضافة صلاحية الكاميرا
       # =========================================================
       - name: Configure Camera Permission
         run: |
@@ -153,7 +218,7 @@ jobs:
 
 
       # =========================================================
-      # 8. فحص Manifest
+      # 9. فحص Manifest
       # =========================================================
       - name: Verify Android Manifest
         run: |
@@ -173,7 +238,7 @@ jobs:
 
 
       # =========================================================
-      # 9. تنظيف Flutter
+      # 10. تنظيف Flutter
       # =========================================================
       - name: Clean Flutter
         run: |
@@ -186,7 +251,7 @@ jobs:
 
 
       # =========================================================
-      # 10. تحميل المكتبات
+      # 11. تحميل المكتبات
       # =========================================================
       - name: Get Dependencies
         run: |
@@ -194,7 +259,22 @@ jobs:
 
 
       # =========================================================
-      # 11. فحص Flutter
+      # 12. تجهيز مكتبات opencv_dart الأصلية (NDK)
+      #
+      # ضرورية لعمل الكشف التلقائي عن حواف المستند (edge_detector.dart)
+      # تُنزّل مكتبات .so الجاهزة لمعماريتي أندرويد الأكثر شيوعاً.
+      # =========================================================
+      - name: Setup opencv_dart native libs
+        run: |
+          echo "=========================================="
+          echo "OPENCV_DART SETUP"
+          echo "=========================================="
+
+          dart run opencv_dart:setup android --arch arm64-v8a,armeabi-v7a
+
+
+      # =========================================================
+      # 13. فحص Flutter
       # =========================================================
       - name: Flutter Version
         run: |
@@ -202,7 +282,7 @@ jobs:
 
 
       # =========================================================
-      # 12. فحص Dependencies
+      # 14. فحص Dependencies
       # =========================================================
       - name: Check Dependencies
         run: |
@@ -210,7 +290,7 @@ jobs:
 
 
       # =========================================================
-      # 13. تحليل المشروع
+      # 15. تحليل المشروع
       #
       # التحذيرات والمعلومات لن توقف البناء.
       # الأخطاء الحقيقية ستظل ظاهرة.
@@ -221,7 +301,7 @@ jobs:
 
 
       # =========================================================
-      # 14. بناء APK
+      # 16. بناء APK
       # =========================================================
       - name: Build APK
         run: |
@@ -235,7 +315,7 @@ jobs:
 
 
       # =========================================================
-      # 15. التأكد من APK
+      # 17. التأكد من APK
       # =========================================================
       - name: Verify APK
         run: |
@@ -253,7 +333,7 @@ jobs:
 
 
       # =========================================================
-      # 16. رفع APK
+      # 18. رفع APK
       # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
