@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -6,11 +7,10 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 class ImageUtils {
   static cv.Mat? decodeBytes(Uint8List bytes) {
     try {
-      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
+      if (bytes.isEmpty) return null;
 
-      if (mat.isEmpty) {
-        return null;
-      }
+      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
+      if (mat.isEmpty) return null;
 
       return mat;
     } catch (e) {
@@ -24,9 +24,7 @@ class ImageUtils {
     int quality = 95,
   }) {
     try {
-      if (image.isEmpty) {
-        return Uint8List(0);
-      }
+      if (image.isEmpty) return Uint8List(0);
 
       final result = cv.imencode(
         '.jpg',
@@ -52,13 +50,8 @@ enum EnhanceMode {
 }
 
 class ImageEnhancer {
-  static cv.Mat apply(
-    cv.Mat source,
-    EnhanceMode mode,
-  ) {
-    if (source.isEmpty) {
-      return source;
-    }
+  static cv.Mat apply(cv.Mat source, EnhanceMode mode) {
+    if (source.isEmpty) return source;
 
     switch (mode) {
       case EnhanceMode.none:
@@ -108,25 +101,34 @@ class ManualCrop {
     double x4,
     double y4,
   ) {
-    if (source.isEmpty) {
-      return null;
-    }
+    if (source.isEmpty) return null;
 
     final w = source.cols.toDouble();
     final h = source.rows.toDouble();
 
     final srcPts = [
-      cv.Point2f(x1 * w, y1 * h),
-      cv.Point2f(x2 * w, y2 * h),
-      cv.Point2f(x3 * w, y3 * h),
-      cv.Point2f(x4 * w, y4 * h),
+      cv.Point2f(x1 * (w - 1), y1 * (h - 1)),
+      cv.Point2f(x2 * (w - 1), y2 * (h - 1)),
+      cv.Point2f(x3 * (w - 1), y3 * (h - 1)),
+      cv.Point2f(x4 * (w - 1), y4 * (h - 1)),
     ];
+
+    final topWidth = _distance(srcPts[0], srcPts[1]);
+    final bottomWidth = _distance(srcPts[3], srcPts[2]);
+    final leftHeight = _distance(srcPts[0], srcPts[3]);
+    final rightHeight = _distance(srcPts[1], srcPts[2]);
+
+    final outputWidth = mathMax(1, mathMaxInt(topWidth.round(), bottomWidth.round()));
+    final outputHeight = mathMax(1, mathMaxInt(leftHeight.round(), rightHeight.round()));
 
     final dstPts = [
       cv.Point2f(0, 0),
-      cv.Point2f(w - 1, 0),
-      cv.Point2f(w - 1, h - 1),
-      cv.Point2f(0, h - 1),
+      cv.Point2f((outputWidth - 1).toDouble(), 0),
+      cv.Point2f(
+        (outputWidth - 1).toDouble(),
+        (outputHeight - 1).toDouble(),
+      ),
+      cv.Point2f(0, (outputHeight - 1).toDouble()),
     ];
 
     try {
@@ -138,21 +140,32 @@ class ManualCrop {
       return cv.warpPerspective(
         source,
         matrix,
-        (source.cols, source.rows),
+        (outputWidth, outputHeight),
       );
     } catch (e) {
       debugPrint('Perspective Crop error: $e');
       return source.clone();
     }
   }
+
+  static double _distance(cv.Point2f a, cv.Point2f b) {
+    final dx = a.x - b.x;
+    final dy = a.y - b.y;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
+  static int mathMax(int a, int b) => a > b ? a : b;
+
+  static int mathMaxInt(int a, int b) => a > b ? a : b;
 }
+
 
 class SmartCrop {
   static List<double>? detectCorners(cv.Mat source) {
-    if (source.isEmpty) {
-      return null;
-    }
+    if (source.isEmpty) return null;
 
+    // Fallback آمن: يحدد معظم الصورة.
+    // يمكن لاحقاً استبداله بكشف مستند حقيقي.
     return [
       0.05,
       0.05,
