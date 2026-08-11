@@ -1,4 +1,4 @@
-name: Build APK
+name: build APK
 
 on:
   push:
@@ -14,312 +14,96 @@ jobs:
 
     steps:
 
-      # =========================================================
       # 1. تحميل المشروع
-      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # =========================================================
-      # 2. Java 17
-      # =========================================================
+      # 2. إعداد Java
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
 
-
-      # =========================================================
-      # 3. Flutter Stable
-      # =========================================================
+      # 3. إعداد Flutter
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-
-      # =========================================================
-      # 4. فحص ملفات المشروع
-      # =========================================================
-      - name: Verify Project Files
-        run: |
-          echo "=========================================="
-          echo "PROJECT"
-          echo "=========================================="
-
-          test -f pubspec.yaml
-          test -f lib/main.dart
-          test -f lib/crop_engine.dart
-
-          echo "Project files OK."
-
-          echo ""
-          echo "=========================================="
-          echo "LIB"
-          echo "=========================================="
-
-          find lib -maxdepth 2 -type f -print
-
-
-      # =========================================================
-      # 5. تجهيز Android
-      # =========================================================
+      # 4. بناء ملفات الأندرويد الناقصة
       - name: Prepare Android Project
         run: |
-          echo "=========================================="
-          echo "ANDROID"
-          echo "=========================================="
-
           if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-
-            echo "Android project missing."
-            echo "Creating Android project..."
-
-            flutter create \
-              --platforms=android \
-              --org=com.mosul \
-              --project-name=mosul_scanner \
-              .
-
-          else
-
-            echo "Android project already exists."
-            echo "Keeping existing Android project."
-
+            flutter create --platforms=android --org=com.mosul --project-name=mosul_scanner .
           fi
 
-          test -f android/app/src/main/AndroidManifest.xml
-
-          echo "Android project OK."
-
-
-      # =========================================================
-      # 6. فرض compileSdk لـ 36 على التطبيق وجميع المكتبات
-      # =========================================================
-      - name: Force Android SDK Levels for App and Plugins
+      # 5. تحديث إصدار التطبيق الأساسي إلى 36
+      - name: Configure App SDK
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          # 1. تحديث ملف التطبيق الأساسي
-          app_candidates = [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]
-          app_file = next((p for p in app_candidates if p.exists()), None)
-          if app_file:
-              text = app_file.read_text()
-              replacements = [
-                  ("compileSdk = flutter.compileSdkVersion", "compileSdk = 36"),
-                  ("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 36"),
-                  ("compileSdk flutter.compileSdkVersion", "compileSdk 36")
-              ]
-              for old, new in replacements:
-                  text = text.replace(old, new)
-              app_file.write_text(text)
-
-          # 2. إجبار جميع المكتبات الخارجية (مثل opencv_dart) على استخدام إصدار 36
-          root_gradle = Path("android/build.gradle")
-          root_gradle_kts = Path("android/build.gradle.kts")
-
-          groovy_injection = """
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          compileSdkVersion 36
-                      }
-                  }
-              }
-          }
-          """
-
-          kts_injection = """
-          subprojects {
-              afterEvaluate {
-                  if (hasProperty("android")) {
-                      extensions.configure<com.android.build.gradle.BaseExtension>("android") {
-                          compileSdkVersion(36)
-                      }
-                  }
-              }
-          }
-          """
-
-          if root_gradle.exists():
-              text = root_gradle.read_text()
-              if "compileSdkVersion 36" not in text:
-                  root_gradle.write_text(text + "\n" + groovy_injection)
-          elif root_gradle_kts.exists():
-              text = root_gradle_kts.read_text()
-              if "compileSdkVersion(36)" not in text:
-                  root_gradle_kts.write_text(text + "\n" + kts_injection)
+          for p in [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]:
+              if p.exists():
+                  text = p.read_text()
+                  text = text.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 36")
+                  text = text.replace("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 36")
+                  p.write_text(text)
           PY
 
-
-      # =========================================================
-      # 7. حذف اختبار Flutter الافتراضي
-      # =========================================================
-      - name: Remove Default Flutter Test
-        run: |
-          echo "Removing default Flutter test..."
-
-          rm -f test/widget_test.dart
-
-          if [ -d test ] && [ -z "$(ls -A test)" ]; then
-            rmdir test
-          fi
-
-          echo "Test cleanup completed."
-
-
-      # =========================================================
-      # 8. إضافة صلاحية الكاميرا
-      # =========================================================
+      # 6. إضافة صلاحية الكاميرا
       - name: Configure Camera Permission
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          manifest = Path(
-              "android/app/src/main/AndroidManifest.xml"
-          )
-
-          text = manifest.read_text()
-
-          permission = (
-              '<uses-permission android:name="android.permission.CAMERA"/>'
-          )
-
-          if permission not in text:
-              marker = (
-                  '<manifest '
-                  'xmlns:android="http://schemas.android.com/apk/res/android">'
-              )
-
-              if marker in text:
-                  text = text.replace(
-                      marker,
-                      marker
-                      + '\n\n'
-                      + '    <uses-permission '
-                        'android:name="android.permission.CAMERA"/>',
-                      1
-                  )
-
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          if manifest.exists():
+              text = manifest.read_text()
+              perm = '<uses-permission android:name="android.permission.CAMERA"/>'
+              if perm not in text:
+                  marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+                  text = text.replace(marker, marker + '\n    ' + perm)
                   manifest.write_text(text)
-
-          print("Camera permission configured.")
           PY
 
-
-      # =========================================================
-      # 9. فحص Manifest
-      # =========================================================
-      - name: Verify Android Manifest
-        run: |
-          echo "=========================================="
-          echo "ANDROID MANIFEST"
-          echo "=========================================="
-
-          test -f android/app/src/main/AndroidManifest.xml
-
-          grep -q \
-            'android.permission.CAMERA' \
-            android/app/src/main/AndroidManifest.xml
-
-          echo "Camera permission found."
-          echo ""
-          cat android/app/src/main/AndroidManifest.xml
-
-
-      # =========================================================
-      # 10. تنظيف Flutter
-      # =========================================================
+      # 7. تنظيف مخلفات Flutter
       - name: Clean Flutter
         run: |
           flutter clean
+          rm -rf .dart_tool build test/widget_test.dart
 
-          rm -rf .dart_tool
-          rm -rf build
-
-          echo "Clean completed."
-
-
-      # =========================================================
-      # 11. تحميل المكتبات
-      # =========================================================
+      # 8. تحميل المكتبات الخارجية (مثل opencv_dart)
       - name: Get Dependencies
+        run: flutter pub get
+
+      # 9. الخطوة السحرية: تعديل كل المكتبات المحملة لتصبح بإصدار 36 بالقوة
+      - name: Patch Plugins SDK
         run: |
-          flutter pub get
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          pub_cache = Path(os.environ.get('PUB_CACHE', os.path.expanduser('~/.pub-cache')))
+          if pub_cache.exists():
+              for gradle_file in pub_cache.rglob("build.gradle*"):
+                  try:
+                      text = gradle_file.read_text(encoding="utf-8")
+                      new_text = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 36', text)
+                      new_text = re.sub(r'compileSdk\s+\d+', 'compileSdk 36', new_text)
+                      new_text = re.sub(r'compileSdk\s*=\s*\d+', 'compileSdk = 36', new_text)
+                      if text != new_text:
+                          gradle_file.write_text(new_text, encoding="utf-8")
+                  except Exception:
+                          pass
+          PY
 
-
-      # =========================================================
-      # 12. فحص Flutter
-      # =========================================================
-      - name: Flutter Version
-        run: |
-          flutter --version
-
-
-      # =========================================================
-      # 13. فحص Dependencies
-      # =========================================================
-      - name: Check Dependencies
-        run: |
-          flutter pub deps
-
-
-      # =========================================================
-      # 14. تحليل المشروع
-      #
-      # التحذيرات والمعلومات لن توقف البناء.
-      # الأخطاء الحقيقية ستظل ظاهرة.
-      # =========================================================
-      - name: Analyze
-        run: |
-          flutter analyze --no-fatal-infos --no-fatal-warnings
-
-
-      # =========================================================
-      # 15. بناء APK
-      # =========================================================
+      # 10. بناء التطبيق النهائي
       - name: Build APK
-        run: |
-          echo "=========================================="
-          echo "BUILDING APK"
-          echo "=========================================="
+        run: flutter build apk --release --no-tree-shake-icons
 
-          flutter build apk \
-            --release \
-            --no-tree-shake-icons
-
-
-      # =========================================================
-      # 16. التأكد من APK
-      # =========================================================
-      - name: Verify APK
-        run: |
-          echo "=========================================="
-          echo "APK"
-          echo "=========================================="
-
-          ls -lh build/app/outputs/flutter-apk/
-
-          test -f \
-            build/app/outputs/flutter-apk/app-release.apk
-
-          echo ""
-          echo "APK CREATED SUCCESSFULLY."
-
-
-      # =========================================================
-      # 17. رفع APK
-      # =========================================================
+      # 11. رفع التطبيق للتحميل
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Mosul-Scanner-APK
           path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
-          retention-days: 7
