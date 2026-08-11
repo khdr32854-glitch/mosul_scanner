@@ -1,177 +1,184 @@
-import 'dart:typed_data';
+class CropScreen extends StatefulWidget {
+  final Uint8List imageBytes;
 
-import 'package:flutter/foundation.dart';
-import 'package:opencv_dart/opencv_dart.dart' as cv;
+  const CropScreen({
+    super.key,
+    required this.imageBytes,
+  });
 
-class ImageUtils {
-  static cv.Mat? decodeBytes(Uint8List bytes) {
+  @override
+  State<CropScreen> createState() => _CropScreenState();
+}
+
+class _CropScreenState extends State<CropScreen> {
+  double _x1 = 0.05;
+  double _y1 = 0.05;
+
+  double _x2 = 0.95;
+  double _y2 = 0.05;
+
+  double _x3 = 0.95;
+  double _y3 = 0.95;
+
+  double _x4 = 0.05;
+  double _y4 = 0.95;
+
+  EnhanceMode _filter = EnhanceMode.none;
+
+  late Uint8List _displayBytes;
+
+  int _imgWidth = 100;
+  int _imgHeight = 100;
+
+  Offset? _dragFocalPoint;
+
+  bool _isDetecting = false;
+  bool _isProcessing = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // مهم جداً:
+    // نعرض الصورة الأصلية مباشرة بدون إعادة ترميزها.
+    _displayBytes = widget.imageBytes;
+
+    _initializeDimensions();
+  }
+
+  void _initializeDimensions() {
+    final mat = ImageUtils.decodeBytes(widget.imageBytes);
+
+    if (mat == null || mat.isEmpty) {
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _imgWidth = mat.cols;
+      _imgHeight = mat.rows;
+    });
+  }
+
+  // ============================================================
+  // الفلاتر
+  // ============================================================
+
+  Future<void> _applyFilter(EnhanceMode mode) async {
+    if (_isProcessing) return;
+
+    setState(() {
+      _filter = mode;
+    });
+
+    // الأصلي = نرجع للصورة الأصلية بدون OpenCV
+    if (mode == EnhanceMode.none) {
+      if (!mounted) return;
+
+      setState(() {
+        _displayBytes = widget.imageBytes;
+      });
+
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+    });
+
     try {
-      final mat = cv.imdecode(bytes, cv.IMREAD_COLOR);
+      final mat = ImageUtils.decodeBytes(widget.imageBytes);
 
-      if (mat.isEmpty) {
-        return null;
+      if (mat == null || mat.isEmpty) {
+        throw Exception('تعذر قراءة الصورة');
       }
 
-      return mat;
-    } catch (e) {
-      debugPrint('OpenCV decode error: $e');
-      return null;
-    }
-  }
+      final processed = ImageEnhancer.apply(
+        mat,
+        mode,
+      );
 
-  static Uint8List encodeJpg(
-    cv.Mat image, {
-    int quality = 95,
-  }) {
-    try {
-      if (image.isEmpty) {
-        return Uint8List(0);
+      final bytes = ImageUtils.encodeJpg(
+        processed,
+        quality: 95,
+      );
+
+      // إذا فشل OpenCV، لا نخلي الشاشة سوداء
+      if (bytes.isEmpty) {
+        throw Exception('فشل تحويل الصورة');
       }
 
-      final result = cv.imencode(
-        '.jpg',
-        image,
-        params: cv.VecI32.fromList([
-          cv.IMWRITE_JPEG_QUALITY,
-          quality,
-        ]),
-      );
+      if (!mounted) return;
 
-      return result.$2;
+      setState(() {
+        _displayBytes = bytes;
+      });
     } catch (e) {
-      debugPrint('OpenCV encode error: $e');
-      return Uint8List(0);
+      debugPrint('Filter error: $e');
+
+      if (!mounted) return;
+
+      // نرجع للصورة الأصلية
+      setState(() {
+        _displayBytes = widget.imageBytes;
+        _filter = EnhanceMode.none;
+      });
+
+      _showSnack('تعذر تطبيق التحسين');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
-}
 
-enum EnhanceMode {
-  none,
-  soft,
-  bw,
-}
+  // ============================================================
+  // تحديد كامل الصورة
+  // ============================================================
 
-class ImageEnhancer {
-  static cv.Mat apply(
-    cv.Mat source,
-    EnhanceMode mode,
-  ) {
-    if (source.isEmpty) {
-      return source;
-    }
+  void _selectAll() {
+    setState(() {
+      _x1 = 0.0;
+      _y1 = 0.0;
 
-    switch (mode) {
-      case EnhanceMode.none:
-        return source.clone();
+      _x2 = 1.0;
+      _y2 = 0.0;
 
-      case EnhanceMode.soft:
-        try {
-          // matType يجب أن يكون positional في إصدار opencv_dart المستخدم.
-          return source.convertTo(
-            source.type,
-            alpha: 1.1,
-            beta: 10,
-          );
-        } catch (e) {
-          debugPrint('Soft enhancement error: $e');
-          return source.clone();
-        }
+      _x3 = 1.0;
+      _y3 = 1.0;
 
-      case EnhanceMode.bw:
-        try {
-          final gray = cv.cvtColor(
-            source,
-            cv.COLOR_BGR2GRAY,
-          );
-
-          return gray.convertTo(
-            gray.type,
-            alpha: 1.5,
-            beta: 20,
-          );
-        } catch (e) {
-          debugPrint('B&W enhancement error: $e');
-          return source.clone();
-        }
-    }
+      _x4 = 0.0;
+      _y4 = 1.0;
+    });
   }
-}
 
-class ManualCrop {
-  static cv.Mat? cropPerspective(
-    cv.Mat source,
-    double x1,
-    double y1,
-    double x2,
-    double y2,
-    double x3,
-    double y3,
-    double x4,
-    double y4,
-  ) {
-    if (source.isEmpty) {
-      return null;
-    }
+  // ============================================================
+  // القص التلقائي
+  // ============================================================
 
-    final double w = source.cols.toDouble();
-    final double h = source.rows.toDouble();
+  Future<void> _runAutoDetect() async {
+    if (_isDetecting || _isProcessing) return;
 
-    final srcPts = [
-      cv.Point2f(x1 * w, y1 * h),
-      cv.Point2f(x2 * w, y2 * h),
-      cv.Point2f(x3 * w, y3 * h),
-      cv.Point2f(x4 * w, y4 * h),
-    ];
-
-    final dstPts = [
-      cv.Point2f(0, 0),
-      cv.Point2f(w - 1, 0),
-      cv.Point2f(w - 1, h - 1),
-      cv.Point2f(0, h - 1),
-    ];
+    setState(() {
+      _isDetecting = true;
+    });
 
     try {
-      final matrix = cv.getPerspectiveTransform2f(
-        srcPts.cvd,
-        dstPts.cvd,
+      final mat = ImageUtils.decodeBytes(
+        widget.imageBytes,
       );
 
-      final result = cv.warpPerspective(
-        source,
-        matrix,
-        (
-          source.cols,
-          source.rows,
-        ),
-      );
+      if (mat == null || mat.isEmpty) {
+        throw Exception('الصورة غير صالحة');
+      }
 
-      return result;
-    } catch (e) {
-      debugPrint('Perspective Crop error: $e');
-      return source.clone();
-    }
-  }
-}
+      final corners = SmartCrop.detectCorners(mat);
 
-class SmartCrop {
-  static List<double>? detectCorners(
-    cv.Mat source,
-  ) {
-    if (source.isEmpty) {
-      return null;
-    }
+      if (corners != null && corners.length == 8) {
+        if (!mounted) return;
 
-    // مؤقتاً: حدود قريبة من كامل الصورة.
-    // يمكن لاحقاً استبدالها بكشف حقيقي لحواف المستند.
-    return [
-      0.05,
-      0.05,
-      0.95,
-      0.05,
-      0.95,
-      0.95,
-      0.05,
-      0.95,
-    ];
-  }
-}
+        setState(() {
+          _x1 = corners[
