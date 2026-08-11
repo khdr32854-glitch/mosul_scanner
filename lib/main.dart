@@ -1,4 +1,4 @@
-import 'dart:io';
+ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -87,10 +87,26 @@ class ImageUtils {
     img.Image image, {
     int quality = 92,
   }) {
+    // JPEG لا يدعم الشفافية أصلاً. إذا كانت الصورة تحمل قناة alpha
+    // (numChannels == 4) بقيم منخفضة، بعض مسارات الترميز الداخلية
+    // تُطبّق الشفافية على الألوان بشكل خاطئ قبل التصدير فيطلع
+    // الناتج شبه أسود بالكامل رغم أن الألوان الحقيقية سليمة. لذلك
+    // نجبر تحويل الصورة لـ RGB خالص (بلا alpha) قبل الترميز.
+    img.Image toEncode = image;
+
+    if (image.numChannels == 4) {
+      try {
+        toEncode = image.convert(numChannels: 3);
+      } catch (e) {
+        debugPrint('RGBA->RGB convert error: $e');
+        toEncode = image;
+      }
+    }
+
     try {
       return Uint8List.fromList(
         img.encodeJpg(
-          image,
+          toEncode,
           quality: quality,
         ),
       );
@@ -1932,11 +1948,12 @@ class _CropScreenState
 
       _debugInfo =
           'src=${widget.image.width}x${widget.image.height} '
+          'ch=${processed.numChannels} '
           'proc=${w}x$h bytes=${_displayBytes.length} | '
           'corner(0,0)=(${corner.r.toInt()},${corner.g.toInt()},'
-          '${corner.b.toInt()}) '
+          '${corner.b.toInt()},a=${corner.a.toInt()}) '
           'center=(${center.r.toInt()},${center.g.toInt()},'
-          '${center.b.toInt()})';
+          '${center.b.toInt()},a=${center.a.toInt()})';
     } catch (e) {
       _debugInfo = 'debug error: $e';
     }
