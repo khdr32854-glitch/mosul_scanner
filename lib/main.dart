@@ -111,25 +111,20 @@ class ImageEnhancer {
     EnhanceMode mode,
     double intensity,
   ) {
-    // التعديل الأول: منع النسخ العشوائي لتجنب تلف الصورة إذا لم يكن هناك فلتر
-    if (mode == EnhanceMode.none) {
-      return source;
-    }
-
-    final image = img.Image.from(source);
-
     switch (mode) {
       case EnhanceMode.none:
-        return image; // لن يتم الوصول لهذا السطر، تركناه لتجنب خطأ الـ Switch
+        // الحل النهائي الجذري للشاشة السوداء:
+        // إنشاء مصفوفة بكسلات جديدة كلياً بنفس الأبعاد لقتل أي بيانات EXIF
+        // تسبب انهيار محرك الرسم، وبنفس الوقت نحافظ على الألوان الأصلية.
+        try {
+          return img.copyResize(source, width: source.width, height: source.height);
+        } catch (_) {
+          return source;
+        }
 
       case EnhanceMode.magic:
         try {
-          final normalized = img.normalize(
-            image,
-            min: 0,
-            max: 255,
-          );
-
+          final normalized = img.normalize(source, min: 0, max: 255);
           return img.adjustColor(
             normalized,
             contrast: 1.1 + (0.3 * intensity),
@@ -137,26 +132,20 @@ class ImageEnhancer {
             saturation: 1.0 + (0.2 * intensity),
           );
         } catch (_) {
-          return image;
+          return source;
         }
 
       case EnhanceMode.bw:
         try {
-          final gray = img.grayscale(image);
-
-          final normalized = img.normalize(
-            gray,
-            min: 0,
-            max: 255,
-          );
-
+          final gray = img.grayscale(source);
+          final normalized = img.normalize(gray, min: 0, max: 255);
           return img.adjustColor(
             normalized,
             contrast: 1.2 + (0.4 * intensity),
             brightness: 1.0 + (0.1 * intensity),
           );
         } catch (_) {
-          return image;
+          return source;
         }
     }
   }
@@ -468,7 +457,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     }
   }
 
-  // التعديل هنا: إزالة {} حول decodedImage ليصبح Parameter مباشر
   void _addDecodedImage(
     img.Image decodedImage, {
     bool isPhoto = false,
@@ -1276,7 +1264,7 @@ class _CropScreenState extends State<CropScreen> {
                       height: imgH,
                       child: Image.memory(
                         _displayBytes,
-                        key: ValueKey(_displayBytes.hashCode), // إجبار تحديث الذاكرة عند تغيير الفلتر
+                        key: ValueKey(_displayBytes.hashCode),
                         fit: BoxFit.fill,
                         errorBuilder: (context, error, stackTrace) {
                           return Container(
