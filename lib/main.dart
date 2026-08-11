@@ -9,7 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-import 'crop_engine.dart'; // محرك OpenCV الجديد الخاص بنا
+import 'crop_engine.dart';
 
 /// ===============================================================
 /// MOSUL SCANNER - PROFESSIONAL EDITION (OPENCV INTEGRATED)
@@ -67,7 +67,7 @@ class MosulScannerApp extends StatelessWidget {
 }
 
 /// ===============================================================
-/// DOCUMENT ITEM (محدث ليتعامل مع البايتات فقط)
+/// DOCUMENT ITEM
 /// ===============================================================
 
 class DocumentItem {
@@ -208,7 +208,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       return;
     }
 
-    // إرسال الصورة كبايتات سريعة جداً إلى شاشة القص
     final resultBytes = await Navigator.push<Uint8List>(
       context,
       MaterialPageRoute(builder: (_) => CropScreen(imageBytes: bytes)),
@@ -240,7 +239,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
       final item = DocumentItem(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
-        cachedBytes: bytes, // تخزين البايتات الجاهزة فوراً
+        cachedBytes: bytes,
         widthMm: width,
         heightMm: height,
         xMm: pageMarginMm + offset,
@@ -255,20 +254,24 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   }
 
   void _resizeActiveItem(double width, double height, {bool isPhoto = false, bool curved = false}) {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+    if (active == null) return;
+
     setState(() {
-      _activeItem!.widthMm = width;
-      _activeItem!.heightMm = height;
-      _activeItem!.isPhotoMode = isPhoto;
-      _activeItem!.hasCurvedCorners = curved;
+      active.widthMm = width;
+      active.heightMm = height;
+      active.isPhotoMode = isPhoto;
+      active.hasCurvedCorners = curved;
     });
   }
 
   void _rotateActiveItem() {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+    if (active == null) return;
+
     setState(() {
-      _activeItem!.rotationAngle = (_activeItem!.rotationAngle + 90) % 360;
-      _activeItem!.applyRotation();
+      active.rotationAngle = (active.rotationAngle + 90) % 360;
+      active.applyRotation();
     });
   }
 
@@ -331,9 +334,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   }
 
   void _deleteActiveItem() {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+    if (active == null) return;
+
     setState(() {
-      _items.remove(_activeItem);
+      _items.remove(active);
       _activeItem = _items.isEmpty ? null : _items.last;
     });
   }
@@ -663,7 +668,7 @@ class CropBoxPainter extends CustomPainter {
 /// ===============================================================
 
 class CropScreen extends StatefulWidget {
-  final Uint8List imageBytes; // يستقبل بايتات الآن وليس كائن Image
+  final Uint8List imageBytes;
 
   const CropScreen({super.key, required this.imageBytes});
 
@@ -687,7 +692,7 @@ class _CropScreenState extends State<CropScreen> {
   @override
   void initState() {
     super.initState();
-    _displayBytes = widget.imageBytes; // مبدئياً نعرض البايتات الأصلية
+    _displayBytes = widget.imageBytes;
     _initializeDimensions();
   }
 
