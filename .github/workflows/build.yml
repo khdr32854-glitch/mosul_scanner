@@ -1,4 +1,4 @@
-name: Build APK
+Name: Build APK
 
 on:
   push:
@@ -97,67 +97,63 @@ jobs:
 
 
       # =========================================================
-      # 6. رفع compileSdk لـ 36 (يتطلبها opencv_dart >= 34)
-      #
-      # الملف android/app/build.gradle(.kts) يتولّد تلقائياً من
-      # الخطوة السابقة (flutter create) ولا يُحفظ بالريبو، لذلك
-      # يجب تعديله هنا بكل تشغيل بعد إنشائه مباشرة.
+      # 6. فرض compileSdk لـ 36 على التطبيق وجميع المكتبات
       # =========================================================
-      - name: Configure Android SDK Levels
+      - name: Force Android SDK Levels for App and Plugins
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          candidates = [
-              Path("android/app/build.gradle.kts"),
-              Path("android/app/build.gradle"),
-          ]
-
-          gradle_file = next(
-              (p for p in candidates if p.exists()), None
-          )
-
-          if gradle_file is None:
-              raise SystemExit(
-                  "android/app/build.gradle(.kts) not found"
-              )
-
-          text = gradle_file.read_text()
-          original = text
-
-          replacements = [
-              (
-                  "compileSdk = flutter.compileSdkVersion",
-                  "compileSdk = 36",
-              ),
-              (
-                  "compileSdkVersion flutter.compileSdkVersion",
-                  "compileSdkVersion 36",
-              ),
-              (
-                  "compileSdk flutter.compileSdkVersion",
-                  "compileSdk 36",
-              ),
-          ]
-
-          for old, new in replacements:
-              if old in text:
+          # 1. تحديث ملف التطبيق الأساسي
+          app_candidates = [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]
+          app_file = next((p for p in app_candidates if p.exists()), None)
+          if app_file:
+              text = app_file.read_text()
+              replacements = [
+                  ("compileSdk = flutter.compileSdkVersion", "compileSdk = 36"),
+                  ("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 36"),
+                  ("compileSdk flutter.compileSdkVersion", "compileSdk 36")
+              ]
+              for old, new in replacements:
                   text = text.replace(old, new)
+              app_file.write_text(text)
 
-          if text == original:
-              print(
-                  "WARNING: no known compileSdk pattern matched, "
-                  "printing file for manual inspection:"
-              )
-              print(text)
-              raise SystemExit(
-                  "compileSdk pattern not found in "
-                  + str(gradle_file)
-              )
+          # 2. إجبار جميع المكتبات الخارجية (مثل opencv_dart) على استخدام إصدار 36
+          root_gradle = Path("android/build.gradle")
+          root_gradle_kts = Path("android/build.gradle.kts")
 
-          gradle_file.write_text(text)
+          groovy_injection = """
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 36
+                      }
+                  }
+              }
+          }
+          """
 
-          print(f"compileSdk updated to 36 in {gradle_file}")
+          kts_injection = """
+          subprojects {
+              afterEvaluate {
+                  if (hasProperty("android")) {
+                      extensions.configure<com.android.build.gradle.BaseExtension>("android") {
+                          compileSdkVersion(36)
+                      }
+                  }
+              }
+          }
+          """
+
+          if root_gradle.exists():
+              text = root_gradle.read_text()
+              if "compileSdkVersion 36" not in text:
+                  root_gradle.write_text(text + "\n" + groovy_injection)
+          elif root_gradle_kts.exists():
+              text = root_gradle_kts.read_text()
+              if "compileSdkVersion(36)" not in text:
+                  root_gradle_kts.write_text(text + "\n" + kts_injection)
           PY
 
 
