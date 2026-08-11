@@ -1886,6 +1886,11 @@ class _CropScreenState
 
   late Uint8List _displayBytes;
 
+  // نص تشخيصي مؤقت يعرض حالة الصورة فعلياً (أبعادها ولون عيّنة
+  // من بكسلاتها) بشكل دائم أعلى الشاشة، لمعرفة السبب الحقيقي
+  // للشاشة السوداء بأرقام حقيقية بدل التخمين.
+  String _debugInfo = '';
+
   // نقطة التركيز الحالية أثناء سحب أي مقبض (زاوية أو منتصف ضلع)،
   // تُستخدم لعرض العدسة المكبرة فوقها. null تعني لا يوجد سحب حالياً.
   Offset? _dragFocalPoint;
@@ -1913,6 +1918,28 @@ class _CropScreenState
       processed,
       quality: 92,
     );
+
+    _updateDebugInfo(processed);
+  }
+
+  void _updateDebugInfo(img.Image processed) {
+    try {
+      final w = processed.width;
+      final h = processed.height;
+
+      final corner = processed.getPixel(0, 0);
+      final center = processed.getPixel(w ~/ 2, h ~/ 2);
+
+      _debugInfo =
+          'src=${widget.image.width}x${widget.image.height} '
+          'proc=${w}x$h bytes=${_displayBytes.length} | '
+          'corner(0,0)=(${corner.r.toInt()},${corner.g.toInt()},'
+          '${corner.b.toInt()}) '
+          'center=(${center.r.toInt()},${center.g.toInt()},'
+          '${center.b.toInt()})';
+    } catch (e) {
+      _debugInfo = 'debug error: $e';
+    }
   }
 
   /// تحديد كامل الصورة (زر "الكل") - يعيد الزوايا الأربع إلى
@@ -2156,6 +2183,27 @@ class _CropScreenState
       body:
           Column(
         children: [
+          // شريط تشخيص مؤقت - يعرض أبعاد الصورة ولون عيّنة من
+          // بكسلاتها بشكل دائم لمعرفة سبب الشاشة السوداء بدقة.
+          Container(
+            width: double.infinity,
+            color: Colors.amber.shade900,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 4,
+            ),
+            child: Text(
+              _debugInfo,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+              ),
+              textDirection: TextDirection.ltr,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+
           Expanded(
             child:
                 LayoutBuilder(
