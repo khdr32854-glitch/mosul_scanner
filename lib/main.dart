@@ -10,6 +10,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import 'edge_detector.dart';
+import 'perspective_warp.dart';
+
 /// ===============================================================
 /// MOSUL SCANNER - PROFESSIONAL EDITION
 /// GOOGLE ML KIT DOCUMENT SCANNER
@@ -171,6 +174,10 @@ class ImageEnhancer {
 /// ===============================================================
 
 class ManualCrop {
+  /// ينفذ تسوية منظور حقيقية (Perspective Warp) - وليس مجرد قص
+  /// مستطيل محيط بالنقاط كما كان سابقاً - أي يحوّل الشكل الرباعي
+  /// (الزوايا الأربع بالإحداثيات النسبية 0..1) إلى صورة مستطيلة
+  /// مسطحة ومصححة تماماً، بنفس مبدأ "مساواة" في تطبيقات المسح.
   static img.Image cropPerspective(
     img.Image source,
     double x1,
@@ -189,55 +196,19 @@ class ManualCrop {
     final w = source.width.toDouble();
     final h = source.height.toDouble();
 
-    final valuesX = <double>[
-      x1,
-      x2,
-      x3,
-      x4,
+    final corners = [
+      Offset(x1.clamp(0.0, 1.0) * w, y1.clamp(0.0, 1.0) * h),
+      Offset(x2.clamp(0.0, 1.0) * w, y2.clamp(0.0, 1.0) * h),
+      Offset(x3.clamp(0.0, 1.0) * w, y3.clamp(0.0, 1.0) * h),
+      Offset(x4.clamp(0.0, 1.0) * w, y4.clamp(0.0, 1.0) * h),
     ];
 
-    final valuesY = <double>[
-      y1,
-      y2,
-      y3,
-      y4,
-    ];
-
-    final minNormalizedX =
-        valuesX.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedX =
-        valuesX.reduce(math.max).clamp(0.0, 1.0);
-
-    final minNormalizedY =
-        valuesY.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedY =
-        valuesY.reduce(math.max).clamp(0.0, 1.0);
-
-    final minX = (minNormalizedX * w)
-        .round()
-        .clamp(0, source.width - 1);
-
-    final minY = (minNormalizedY * h)
-        .round()
-        .clamp(0, source.height - 1);
-
-    final maxX = (maxNormalizedX * w)
-        .round()
-        .clamp(minX + 1, source.width);
-
-    final maxY = (maxNormalizedY * h)
-        .round()
-        .clamp(minY + 1, source.height);
-
-    return img.copyCrop(
-      source,
-      x: minX,
-      y: minY,
-      width: math.max(10, maxX - minX),
-      height: math.max(10, maxY - minY),
-    );
+    try {
+      return PerspectiveWarp.warp(source, corners);
+    } catch (e) {
+      debugPrint('Perspective warp error: $e');
+      return img.Image.from(source);
+    }
   }
 }
 
@@ -251,6 +222,30 @@ void main() {
   runApp(
     const MosulScannerApp(),
   );
+}
+
+/// دالة على المستوى الأعلى (top-level) مطلوبة لتشغيل الكشف
+/// التلقائي عن الحواف داخل Isolate منفصل عبر compute()، حتى لا
+/// يتجمد واجهة المستخدم أثناء المعالجة. تُعيد قائمة مسطحة من 8
+/// أرقام [x1,y1,x2,y2,x3,y3,x4,y4] بدل Offset لأن الأنواع البسيطة
+/// فقط هي القابلة للإرسال بأمان بين الـ Isolates.
+List<double>? detectDocumentCornersIsolate(Uint8List imageBytes) {
+  final corners = DocumentEdgeDetector.detect(imageBytes);
+
+  if (corners == null || corners.length != 4) {
+    return null;
+  }
+
+  return [
+    corners[0].dx,
+    corners[0].dy,
+    corners[1].dx,
+    corners[1].dy,
+    corners[2].dx,
+    corners[2].dy,
+    corners[3].dx,
+    corners[3].dy,
+  ];
 }
 
 /// ===============================================================
@@ -1891,6 +1886,13 @@ class _CropScreenState
 
   late Uint8List _displayBytes;
 
+  // نقطة التركيز الحالية أثناء سحب أي مقبض (زاوية أو منتصف ضلع)،
+  // تُستخدم لعرض العدسة المكبرة فوقها. null تعني لا يوجد سحب حالياً.
+  Offset? _dragFocalPoint;
+
+  // true أثناء تشغيل الكشف التلقائي عن حواف المستند في الخلفية.
+  bool _isDetecting = false;
+
   @override
   void initState() {
     super.initState();
@@ -1913,20 +1915,98 @@ class _CropScreenState
     );
   }
 
-  void _autoCrop() {
+  /// تحديد كامل الصورة (زر "الكل") - يعيد الزوايا الأربع إلى
+  /// حواف الصورة تماماً.
+  void _selectAll() {
     setState(() {
-      _x1 = 0.05;
-      _y1 = 0.05;
+      _x1 = 0.0;
+      _y1 = 0.0;
 
-      _x2 = 0.95;
-      _y2 = 0.05;
+      _x2 = 1.0;
+      _y2 = 0.0;
 
-      _x3 = 0.95;
-      _y3 = 0.95;
+      _x3 = 1.0;
+      _y3 = 1.0;
 
-      _x4 = 0.05;
-      _y4 = 0.95;
+      _x4 = 0.0;
+      _y4 = 1.0;
     });
+  }
+
+  /// الكشف التلقائي الحقيقي عن حواف المستند (زر "القص التلقائي")،
+  /// يشغّل خوارزمية opencv_dart داخل Isolate منفصل حتى لا تُجمّد
+  /// واجهة المستخدم، ثم يحدّث الزوايا الأربع بناءً على النتيجة.
+  Future<void> _runAutoDetect() async {
+    if (_isDetecting) {
+      return;
+    }
+
+    setState(() {
+      _isDetecting = true;
+    });
+
+    try {
+      final bytes = ImageUtils.encodeJpg(
+        widget.image,
+        quality: 90,
+      );
+
+      final flatCorners = await compute(
+        detectDocumentCornersIsolate,
+        bytes,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (flatCorners != null && flatCorners.length == 8) {
+        final w = widget.image.width.toDouble();
+        final h = widget.image.height.toDouble();
+
+        setState(() {
+          _x1 = (flatCorners[0] / w).clamp(0.0, 1.0);
+          _y1 = (flatCorners[1] / h).clamp(0.0, 1.0);
+          _x2 = (flatCorners[2] / w).clamp(0.0, 1.0);
+          _y2 = (flatCorners[3] / h).clamp(0.0, 1.0);
+          _x3 = (flatCorners[4] / w).clamp(0.0, 1.0);
+          _y3 = (flatCorners[5] / h).clamp(0.0, 1.0);
+          _x4 = (flatCorners[6] / w).clamp(0.0, 1.0);
+          _y4 = (flatCorners[7] / h).clamp(0.0, 1.0);
+        });
+      } else {
+        _showSnack(
+          'تعذر اكتشاف حواف المستند تلقائياً، يمكنك تحديدها يدوياً',
+        );
+      }
+    } catch (e) {
+      debugPrint('Auto detect error: $e');
+
+      _showSnack('تعذر تشغيل الكشف التلقائي');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDetecting = false;
+        });
+      }
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            message,
+            textDirection: TextDirection.rtl,
+          ),
+        ),
+      );
   }
 
   void _applyCrop() {
@@ -2046,7 +2126,7 @@ class _CropScreenState
         actions: [
           IconButton(
             tooltip:
-                'تحديد تقريبي',
+                'تحديد الكل',
             icon:
                 const Icon(
               Icons
@@ -2055,7 +2135,7 @@ class _CropScreenState
                   Colors.amber,
             ),
             onPressed:
-                _autoCrop,
+                _selectAll,
           ),
 
           IconButton(
@@ -2257,6 +2337,88 @@ class _CropScreenState
                         });
                       },
                     ),
+
+                    // نقاط منتصف الأضلاع الأربعة - سحبها يحرّك
+                    // الضلع بالكامل (كلا الزاويتين معاً)، تماماً
+                    // كخاصية "مساواة" في تطبيقات المسح المعروفة.
+                    _buildEdgeMidHandle(
+                      _x1,
+                      _y1,
+                      _x2,
+                      _y2,
+                      imgL,
+                      imgT,
+                      imgW,
+                      imgH,
+                      (dnx, dny) {
+                        setState(() {
+                          _x1 = (_x1 + dnx).clamp(0.0, 1.0);
+                          _y1 = (_y1 + dny).clamp(0.0, 1.0);
+                          _x2 = (_x2 + dnx).clamp(0.0, 1.0);
+                          _y2 = (_y2 + dny).clamp(0.0, 1.0);
+                        });
+                      },
+                    ),
+
+                    _buildEdgeMidHandle(
+                      _x2,
+                      _y2,
+                      _x3,
+                      _y3,
+                      imgL,
+                      imgT,
+                      imgW,
+                      imgH,
+                      (dnx, dny) {
+                        setState(() {
+                          _x2 = (_x2 + dnx).clamp(0.0, 1.0);
+                          _y2 = (_y2 + dny).clamp(0.0, 1.0);
+                          _x3 = (_x3 + dnx).clamp(0.0, 1.0);
+                          _y3 = (_y3 + dny).clamp(0.0, 1.0);
+                        });
+                      },
+                    ),
+
+                    _buildEdgeMidHandle(
+                      _x3,
+                      _y3,
+                      _x4,
+                      _y4,
+                      imgL,
+                      imgT,
+                      imgW,
+                      imgH,
+                      (dnx, dny) {
+                        setState(() {
+                          _x3 = (_x3 + dnx).clamp(0.0, 1.0);
+                          _y3 = (_y3 + dny).clamp(0.0, 1.0);
+                          _x4 = (_x4 + dnx).clamp(0.0, 1.0);
+                          _y4 = (_y4 + dny).clamp(0.0, 1.0);
+                        });
+                      },
+                    ),
+
+                    _buildEdgeMidHandle(
+                      _x4,
+                      _y4,
+                      _x1,
+                      _y1,
+                      imgL,
+                      imgT,
+                      imgW,
+                      imgH,
+                      (dnx, dny) {
+                        setState(() {
+                          _x4 = (_x4 + dnx).clamp(0.0, 1.0);
+                          _y4 = (_y4 + dny).clamp(0.0, 1.0);
+                          _x1 = (_x1 + dnx).clamp(0.0, 1.0);
+                          _y1 = (_y1 + dny).clamp(0.0, 1.0);
+                        });
+                      },
+                    ),
+
+                    // العدسة المكبرة - تظهر فقط أثناء سحب أي مقبض.
+                    _buildMagnifier(cw, ch, imgL, imgT, imgW, imgH),
                   ],
                 );
               },
@@ -2327,7 +2489,244 @@ class _CropScreenState
                 ],
               ),
             ),
+
+          // شريط سفلي بأسلوب تطبيقات مسح المستندات: "الكل" لإعادة
+          // التحديد لكامل الصورة، و"القص التلقائي" لتشغيل الكشف
+          // الحقيقي عن حواف المستند (opencv_dart).
+          Container(
+            color: const Color(0xFF1E293B),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _bottomToolButton(
+                  label: 'الكل',
+                  icon: Icons.crop_free,
+                  onTap: _selectAll,
+                ),
+
+                _bottomToolButton(
+                  label: 'القص التلقائي',
+                  icon: Icons.auto_fix_high,
+                  onTap: _isDetecting ? null : _runAutoDetect,
+                  isLoading: _isDetecting,
+                ),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _bottomToolButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onTap,
+    bool isLoading = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 6,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF38BDF8),
+                    ),
+                  )
+                : Icon(
+                    icon,
+                    color: const Color(0xFF38BDF8),
+                    size: 22,
+                  ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// مقبض منتصف الضلع - يظهر كقطعة بيضاوية بين زاويتين، وسحبه
+  /// يحرّك الضلع بالكامل (كلا الزاويتين معاً بنفس المقدار).
+  Widget _buildEdgeMidHandle(
+    double ax,
+    double ay,
+    double bx,
+    double by,
+    double il,
+    double it,
+    double iw,
+    double ih,
+    void Function(double dnx, double dny) onDelta,
+  ) {
+    final mx = (ax + bx) / 2;
+    final my = (ay + by) / 2;
+
+    final centerX = il + mx * iw;
+    final centerY = it + my * ih;
+
+    // اتجاه الضلع لتدوير شكل المقبض معه (أفقي أو رأسي تقريباً).
+    final isHorizontal = (bx - ax).abs() >= (by - ay).abs();
+
+    return Positioned(
+      left: centerX - 14,
+      top: centerY - 14,
+      child: GestureDetector(
+        onPanStart: (_) {
+          setState(() {
+            _dragFocalPoint = Offset(centerX, centerY);
+          });
+        },
+        onPanUpdate: (details) {
+          final dnx = details.delta.dx / iw;
+          final dny = details.delta.dy / ih;
+
+          setState(() {
+            final current = _dragFocalPoint ?? Offset(centerX, centerY);
+            _dragFocalPoint = current + details.delta;
+          });
+
+          onDelta(dnx, dny);
+        },
+        onPanEnd: (_) {
+          setState(() {
+            _dragFocalPoint = null;
+          });
+        },
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          child: Container(
+            width: isHorizontal ? 26 : 10,
+            height: isHorizontal ? 10 : 26,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: const Color(0xFF0284C7),
+                width: 1.5,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black45,
+                  blurRadius: 3,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// العدسة المكبرة - تظهر فوق نقطة السحب الحالية لمساعدة المستخدم
+  /// على وضع الزاوية بدقة على حافة المستند، تماماً كما في تطبيقات
+  /// المسح الاحترافية.
+  Widget _buildMagnifier(
+    double cw,
+    double ch,
+    double il,
+    double it,
+    double iw,
+    double ih,
+  ) {
+    final focus = _dragFocalPoint;
+
+    if (focus == null) {
+      return const SizedBox.shrink();
+    }
+
+    const double lensSize = 110;
+    const double zoom = 2.5;
+
+    // موقع نقطة التركيز نسبة لمستطيل الصورة المعروضة (وليس
+    // الحاوية كاملة)، حتى لا يحدث انزياح إذا كانت الصورة لا تملأ
+    // الحاوية بالكامل (letterboxing).
+    final localX = focus.dx - il;
+    final localY = focus.dy - it;
+
+    double left = focus.dx - lensSize / 2;
+    left = left.clamp(0.0, math.max(0.0, cw - lensSize));
+
+    double top = focus.dy - lensSize - 40;
+    if (top < 0) {
+      top = math.min(focus.dy + 40, math.max(0.0, ch - lensSize));
+    }
+
+    return Positioned(
+      left: left,
+      top: top,
+      child: IgnorePointer(
+        child: Container(
+          width: lensSize,
+          height: lensSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white,
+              width: 3,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black54,
+                blurRadius: 8,
+              ),
+            ],
+          ),
+          child: ClipOval(
+            child: Stack(
+              children: [
+                Positioned(
+                  left: lensSize / 2 - localX * zoom,
+                  top: lensSize / 2 - localY * zoom,
+                  width: iw * zoom,
+                  height: ih * zoom,
+                  child: Image.memory(
+                    _displayBytes,
+                    fit: BoxFit.fill,
+                  ),
+                ),
+                Center(
+                  child: Container(
+                    width: 2,
+                    height: 16,
+                    color: const Color(0xFF0284C7),
+                  ),
+                ),
+                Center(
+                  child: Container(
+                    width: 16,
+                    height: 2,
+                    color: const Color(0xFF0284C7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2357,6 +2756,15 @@ class _CropScreenState
 
       child:
           GestureDetector(
+        onPanStart: (_) {
+          setState(() {
+            _dragFocalPoint = Offset(
+              il + rx * iw,
+              it + ry * ih,
+            );
+          });
+        },
+
         onPanUpdate:
             (details) {
           final currentX =
@@ -2391,10 +2799,24 @@ class _CropScreenState
             1.0,
           );
 
+          setState(() {
+            final current =
+                _dragFocalPoint ??
+                    Offset(currentX, currentY);
+            _dragFocalPoint =
+                current + details.delta;
+          });
+
           onMove(
             newX,
             newY,
           );
+        },
+
+        onPanEnd: (_) {
+          setState(() {
+            _dragFocalPoint = null;
+          });
         },
 
         child:
