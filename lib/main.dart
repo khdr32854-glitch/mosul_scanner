@@ -2269,4 +2269,3 @@ class _CropScreenState
     );
   }
 }
-
