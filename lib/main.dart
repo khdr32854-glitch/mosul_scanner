@@ -1,4 +1,4 @@
- import 'dart:io';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -2245,13 +2245,23 @@ class _CropScreenState
                     widget.image.height
                         .toDouble();
 
-                // حماية تشخيصية: إذا كانت أبعاد الصورة غير صالحة
-                // (صفر) نعرض رسالة واضحة بدل شاشة سوداء صامتة.
-                if (iw <= 0 || ih <= 0 || cw <= 0 || ch <= 0) {
+                // حماية تشخيصية: إذا كانت أبعاد الصورة أو القيود
+                // غير صالحة (صفر أو NaN أو Infinity غير محدودة)
+                // نعرض رسالة واضحة بالأرقام الحقيقية بدل شاشة سوداء
+                // صامتة ناتجة عن قيم لا نهائية بحسابات الموضع.
+                if (iw <= 0 ||
+                    ih <= 0 ||
+                    cw <= 0 ||
+                    ch <= 0 ||
+                    !cw.isFinite ||
+                    !ch.isFinite) {
                   return Center(
                     child: Text(
-                      'تعذر عرض الصورة (أبعاد غير صالحة)\n'
-                      'iw=$iw ih=$ih cw=$cw ch=$ch',
+                      'تعذر عرض الصورة (قيود غير صالحة)\n'
+                      'iw=$iw ih=$ih\n'
+                      'cw=$cw ch=$ch\n'
+                      'cw.isFinite=${cw.isFinite} '
+                      'ch.isFinite=${ch.isFinite}',
                       style: const TextStyle(
                         color: Colors.red,
                         fontSize: 13,
@@ -2278,6 +2288,32 @@ class _CropScreenState
 
                 final imgT =
                     (ch - imgH) / 2;
+
+                // حماية إضافية: إذا نتج عن الحسابات نفسها (وليس
+                // القيود الأصلية) قيمة غير محدودة أو NaN، نوقف هنا
+                // ونعرض الأرقام بدل تمريرها لـ Stack/Positioned
+                // وتسبب فشل رسم صامت.
+                if (!scale.isFinite ||
+                    scale <= 0 ||
+                    !imgW.isFinite ||
+                    !imgH.isFinite ||
+                    !imgL.isFinite ||
+                    !imgT.isFinite) {
+                  return Center(
+                    child: Text(
+                      'خطأ حسابي بالهندسة (قيمة غير محدودة)\n'
+                      'cw=$cw ch=$ch iw=$iw ih=$ih\n'
+                      'scale=$scale\n'
+                      'imgW=$imgW imgH=$imgH\n'
+                      'imgL=$imgL imgT=$imgT',
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontSize: 12,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  );
+                }
 
                 final p1 =
                     Offset(
