@@ -307,7 +307,53 @@ jobs:
 
 
       # =========================================================
-      # 13. فحص Flutter
+      # 13. رفع compileSdk داخل كل الحزم المحمّلة بالقوة (opencv_dart
+      # وأي حزمة ثانية تعتمد عليها) - الحزم نفسها (مو تطبيقك) لها
+      # ملفات build.gradle خاصة بيها بمجلد pub-cache تحمل compileSdk
+      # قديم (33) بشكل ثابت من المطوّر، وتعديل build.gradle الخاص
+      # بتطبيقك فقط (الخطوة 6) لا يكفي لحل هذا التعارض.
+      # =========================================================
+      - name: Patch Plugins SDK
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          pub_cache = Path(
+              os.environ.get(
+                  "PUB_CACHE",
+                  os.path.expanduser("~/.pub-cache"),
+              )
+          )
+
+          patched = 0
+
+          if pub_cache.exists():
+              for gradle_file in pub_cache.rglob("build.gradle*"):
+                  try:
+                      text = gradle_file.read_text(encoding="utf-8")
+                  except Exception:
+                      continue
+
+                  new_text = re.sub(
+                      r"(compileSdk(?:Version)?\s*=?\s*)\d+",
+                      r"\g<1>36",
+                      text,
+                  )
+
+                  if new_text != text:
+                      gradle_file.write_text(
+                          new_text, encoding="utf-8"
+                      )
+                      patched += 1
+
+          print(f"Patched {patched} gradle file(s) in pub-cache.")
+          PY
+
+
+      # =========================================================
+      # 14. فحص Flutter
       # =========================================================
       - name: Flutter Version
         run: |
@@ -315,7 +361,7 @@ jobs:
 
 
       # =========================================================
-      # 14. فحص Dependencies
+      # 15. فحص Dependencies
       # =========================================================
       - name: Check Dependencies
         run: |
@@ -323,7 +369,7 @@ jobs:
 
 
       # =========================================================
-      # 15. تحليل المشروع
+      # 16. تحليل المشروع
       #
       # التحذيرات والمعلومات لن توقف البناء.
       # الأخطاء الحقيقية ستظل ظاهرة.
@@ -334,7 +380,7 @@ jobs:
 
 
       # =========================================================
-      # 16. بناء APK
+      # 17. بناء APK
       # =========================================================
       - name: Build APK
         run: |
@@ -348,7 +394,7 @@ jobs:
 
 
       # =========================================================
-      # 17. التأكد من APK
+      # 18. التأكد من APK
       # =========================================================
       - name: Verify APK
         run: |
@@ -366,7 +412,7 @@ jobs:
 
 
       # =========================================================
-      # 18. رفع APK
+      # 19. رفع APK
       # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
