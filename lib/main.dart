@@ -523,13 +523,10 @@ class _MainScannerScreenState
             ImageUtils.decodeBytes(bytes);
 
         if (decoded != null) {
-          // ✅ تم التعديل: الصورة تذهب مباشرة إلى واجهة العمل
-          // ولا تفتح أداة القص تلقائياً.
-          _addDecodedImage(
+          await _processImageWithCropScreen(
             decoded,
             isPhoto:
                 _activeTabMode == 'photos',
-            curved: false,
           );
         }
 
@@ -549,13 +546,10 @@ class _MainScannerScreenState
             ImageUtils.decodeBytes(bytes);
 
         if (decoded != null) {
-          // ✅ تم التعديل: الصورة تذهب مباشرة إلى واجهة العمل
-          // ولا تفتح أداة القص تلقائياً.
-          _addDecodedImage(
+          await _processImageWithCropScreen(
             decoded,
             isPhoto:
                 _activeTabMode == 'photos',
-            curved: false,
           );
         }
       }
@@ -1935,14 +1929,23 @@ class _CropScreenState
       _filterIntensity,
     );
 
-    // نستخدم encodeJpg الآمن (الذي يحوّل RGBA→RGB قبل الترميز)
-    // بدل encodePng لأن بعض إصدارات مكتبة image تنتج PNG بصيغة
-    // لا يتعرف عليها محرك Skia في Flutter بشكل صحيح، مما يؤدي
-    // إلى شاشة سوداء رغم أن بيانات الصورة سليمة.
-    _displayBytes = ImageUtils.encodeJpg(
-      processed,
-      quality: 92,
-    );
+    // نستخدم PNG بدل JPEG لعرض المعاينة داخل شاشة القص فقط.
+    // مرمّز JPEG الخاص بمكتبة image (Dart) أثبت (بالتشخيص) أنه
+    // ينتج أحياناً ملفات JPEG تفشل صامتة عند فك تشفيرها بمحرك
+    // Skia داخل Flutter رغم أن بياناتها سليمة، بينما PNG (بلا فقدان)
+    // أكثر موثوقية لهذا الغرض. الترميز النهائي للتصدير/الطباعة
+    // ما زال يستخدم JPEG بمكان تاني بدون تغيير.
+    try {
+      _displayBytes = Uint8List.fromList(
+        img.encodePng(processed),
+      );
+    } catch (e) {
+      debugPrint('PNG encode error: $e');
+      _displayBytes = ImageUtils.encodeJpg(
+        processed,
+        quality: 92,
+      );
+    }
 
     _updateDebugInfo(processed);
   }
@@ -2366,6 +2369,29 @@ class _CropScreenState
 
                 return Stack(
                   children: [
+                    // نص تشخيصي بموقع ثابت 100% (0,0) مالوش أي
+                    // اعتماد على حسابات imgL/imgT/imgW/imgH. إذا
+                    // هذا ما ظهر، فالمشكلة أعمق من أي حساب إحداثيات.
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: Container(
+                        color: Colors.lime,
+                        padding: const EdgeInsets.all(4),
+                        child: Text(
+                          'STACK OK | cw=$cw ch=$ch scale=$scale\n'
+                          'imgL=$imgL imgT=$imgT '
+                          'imgW=$imgW imgH=$imgH',
+                          style: const TextStyle(
+                            color: Colors.black,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textDirection: TextDirection.ltr,
+                        ),
+                      ),
+                    ),
+
                     Positioned(
                       left: imgL,
                       top: imgT,
