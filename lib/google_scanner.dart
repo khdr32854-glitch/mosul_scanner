@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
 /// ===============================================================
-/// GOOGLE SCANNER SERVICE - خدمة ماسح المستندات الذكي (مفصول تماماً)
+/// GOOGLE SCANNER SERVICE - خدمة ماسح المستندات الذكي
 /// ===============================================================
 class GoogleScannerService {
   /// يقوم بتشغيل ماسح جوجل الذكي محلياً (Offline AI)
@@ -13,8 +13,8 @@ class GoogleScannerService {
         DocumentFormat.pdf,
       },
       mode: ScannerMode.full,
-      pageLimit: 5, // الحد الأقصى للصفحات في الجلسة الواحدة
-      isGalleryImport: true, // السماح بالاستيراد والقص الذكي من المعرض
+      pageLimit: 5, 
+      isGalleryImport: true, 
     );
 
     final scanner = DocumentScanner(options: options);
