@@ -411,61 +411,100 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     });
 
     try {
-      final paths = await GoogleScanner.scan(
+      final result = await GoogleScanner.scan(
         fromGallery: fromGallery,
       );
 
       if (!mounted) return;
 
-      if (paths != null && paths.isNotEmpty) {
-        int added = 0;
-
-        for (final path in paths) {
-          try {
-            final file = File(path);
-
-            if (!await file.exists()) {
-              continue;
-            }
-
-            final bytes = await file.readAsBytes();
-
-            final decoded = await compute(
-              decodeImageIsolate,
-              bytes,
-            );
-
-            if (decoded != null &&
-                ImageUtils.isValid(decoded)) {
-              _addDecodedImage(
-                decoded,
-                isPhoto: false,
-                curved: true,
-              );
-              added++;
-            }
-          } catch (e) {
-            debugPrint(
-              'Google image processing error: $e',
-            );
-          }
+      if (result.status == GoogleScanStatus.cancelled) {
+        if (result.message != null && result.message!.isNotEmpty) {
+          _showMessage(result.message!);
         }
+        return;
+      }
 
-        if (added > 0) {
-          _showMessage(
-            'تم المسح بالذكاء الاصطناعي المحلي بنجاح',
+      if (result.status == GoogleScanStatus.timeout) {
+        _showMessage(
+          result.message ??
+              'انتهت مهلة تشغيل ماسح Google. '
+                  'تأكد من Google Play services واتصال الإنترنت عند أول تشغيل.',
+          error: true,
+        );
+        return;
+      }
+
+      if (result.status == GoogleScanStatus.unavailable) {
+        _showMessage(
+          result.message ??
+              'ماسح Google غير متاح. حدّث Google Play services ثم حاول مرة أخرى.',
+          error: true,
+        );
+        return;
+      }
+
+      if (!result.isSuccess) {
+        _showMessage(
+          result.message ?? 'تعذر تشغيل ماسح Google.',
+          error: true,
+        );
+        return;
+      }
+
+      int added = 0;
+
+      for (final path in result.images) {
+        try {
+          final file = File(path);
+
+          if (!await file.exists()) {
+            debugPrint('Google scanner file not found: $path');
+            continue;
+          }
+
+          final bytes = await file.readAsBytes();
+
+          if (bytes.isEmpty) {
+            debugPrint('Google scanner returned an empty file: $path');
+            continue;
+          }
+
+          final decoded = await compute(
+            decodeImageIsolate,
+            bytes,
           );
-        } else {
-          _showMessage(
-            'لم يتم العثور على صور صالحة',
-            error: true,
-          );
+
+          if (decoded != null && ImageUtils.isValid(decoded)) {
+            _addDecodedImage(
+              decoded,
+              isPhoto: false,
+              curved: true,
+            );
+            added++;
+          }
+        } catch (e, stackTrace) {
+          debugPrint('Google image processing error: $e');
+          debugPrintStack(stackTrace: stackTrace);
         }
       }
-    } catch (e) {
+
+      if (added > 0) {
+        _showMessage(
+          'تم استيراد $added ${added == 1 ? 'مستند' : 'مستندات'} بنجاح',
+        );
+      } else {
+        _showMessage(
+          'تم تشغيل Google Scanner لكن لم يتم العثور على صور صالحة.',
+          error: true,
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Google scanner integration error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (mounted) {
         _showMessage(
-          'تعذر تشغيل ماسح جوجل الذكي',
+          'تعذر تشغيل ماسح Google: $e',
           error: true,
         );
       }
