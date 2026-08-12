@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -258,20 +257,20 @@ class ManualCrop {
 
     final corners = [
       Offset(
-        x1.clamp(0.0, 1.0) * w,
-        y1.clamp(0.0, 1.0) * h,
+        x1.clamp(0.0, 1.0),
+        y1.clamp(0.0, 1.0),
       ),
       Offset(
-        x2.clamp(0.0, 1.0) * w,
-        y2.clamp(0.0, 1.0) * h,
+        x2.clamp(0.0, 1.0),
+        y2.clamp(0.0, 1.0),
       ),
       Offset(
-        x3.clamp(0.0, 1.0) * w,
-        y3.clamp(0.0, 1.0) * h,
+        x3.clamp(0.0, 1.0),
+        y3.clamp(0.0, 1.0),
       ),
       Offset(
-        x4.clamp(0.0, 1.0) * w,
-        y4.clamp(0.0, 1.0) * h,
+        x4.clamp(0.0, 1.0),
+        y4.clamp(0.0, 1.0),
       ),
     ];
 
@@ -477,27 +476,34 @@ class _MainScannerScreenState
       if (!mounted) return;
 
       debugPrint(
-        'Google Scanner status: ${result.status}',
+        '========================================',
       );
-
       debugPrint(
-        'Google Scanner success: ${result.isSuccess}',
+        'GOOGLE DOCUMENT SCANNER RESULT',
       );
-
       debugPrint(
-        'Google Scanner message: ${result.message}',
+        'status       : ${result.status}',
       );
-
       debugPrint(
-        'Google Scanner code: ${result.errorCode}',
+        'isSuccess    : ${result.isSuccess}',
       );
-
       debugPrint(
-        'Google Scanner native: ${result.nativeMessage}',
+        'message      : ${result.message}',
       );
-
       debugPrint(
-        'Google Scanner images: ${result.images.length}',
+        'errorCode    : ${result.errorCode}',
+      );
+      debugPrint(
+        'native       : ${result.nativeMessage}',
+      );
+      debugPrint(
+        'details      : ${result.details}',
+      );
+      debugPrint(
+        'images       : ${result.images.length}',
+      );
+      debugPrint(
+        '========================================',
       );
 
       /// ---------------------------------------------------------
@@ -508,7 +514,7 @@ class _MainScannerScreenState
           GoogleScanStatus.success) {
         if (result.images.isEmpty) {
           _showMessage(
-            'تم تشغيل Google Scanner ولكن لم يتم إرجاع صور.',
+            'تم تشغيل Google Document Scanner ولكن لم يتم إرجاع صور.',
             error: true,
           );
           return;
@@ -556,6 +562,10 @@ class _MainScannerScreenState
               );
 
               added++;
+            } else {
+              debugPrint(
+                'Failed to decode image: $path',
+              );
             }
           } catch (e, stack) {
             debugPrint(
@@ -572,12 +582,12 @@ class _MainScannerScreenState
 
         if (added > 0) {
           _showMessage(
-            'تم المسح بالذكاء الاصطناعي المحلي بنجاح '
-            '($added صورة)',
+            'تم استيراد $added صورة بنجاح.',
           );
         } else {
           _showMessage(
-            'تم تشغيل الماسح، لكن تعذر تحميل الصور.',
+            'تم تشغيل Google Document Scanner، '
+            'لكن تعذر تحميل الصور الناتجة.',
             error: true,
           );
         }
@@ -598,40 +608,32 @@ class _MainScannerScreenState
       }
 
       /// ---------------------------------------------------------
-      /// TIMEOUT
-      /// ---------------------------------------------------------
-
-      if (result.status ==
-          GoogleScanStatus.timeout) {
-        _showMessage(
-          result.message.isNotEmpty
-              ? result.message
-              : 'انتهت مهلة تشغيل Google Document Scanner.',
-          error: true,
-        );
-        return;
-      }
-
-      /// ---------------------------------------------------------
       /// UNAVAILABLE
       /// ---------------------------------------------------------
 
       if (result.status ==
           GoogleScanStatus.unavailable) {
         final details = <String>[
-          result.message,
+          if (result.message.isNotEmpty)
+            result.message,
           if (result.errorCode != null &&
               result.errorCode!.isNotEmpty)
             'Code: ${result.errorCode}',
           if (result.nativeMessage != null &&
               result.nativeMessage!.isNotEmpty)
             'Native: ${result.nativeMessage}',
+          if (result.details != null &&
+              result.details!.isNotEmpty)
+            'Details: ${result.details}',
         ].join('\n');
 
         _showMessage(
-          details,
+          details.isNotEmpty
+              ? details
+              : 'Google Document Scanner غير متاح على الجهاز حالياً.',
           error: true,
         );
+
         return;
       }
 
@@ -640,31 +642,48 @@ class _MainScannerScreenState
       /// ---------------------------------------------------------
 
       final details = <String>[
-        result.message,
+        if (result.message.isNotEmpty)
+          result.message,
         if (result.errorCode != null &&
             result.errorCode!.isNotEmpty)
           'Code: ${result.errorCode}',
         if (result.nativeMessage != null &&
             result.nativeMessage!.isNotEmpty)
           'Native: ${result.nativeMessage}',
+        if (result.details != null &&
+            result.details!.isNotEmpty)
+          'Details: ${result.details}',
       ].join('\n');
 
       _showMessage(
-        details,
+        details.isNotEmpty
+            ? details
+            : 'حدث خطأ غير معروف أثناء تشغيل Google Document Scanner.',
         error: true,
       );
     } catch (e, stack) {
       debugPrint(
-        'Google Scanner main error: $e',
+        '========================================',
       );
-
+      debugPrint(
+        'GOOGLE SCANNER MAIN EXCEPTION',
+      );
+      debugPrint(
+        'Type: ${e.runtimeType}',
+      );
+      debugPrint(
+        'Exception: $e',
+      );
       debugPrint(
         stack.toString(),
+      );
+      debugPrint(
+        '========================================',
       );
 
       if (mounted) {
         _showMessage(
-          'حدث خطأ أثناء تشغيل Google Document Scanner:\n$e',
+          'حدث استثناء أثناء تشغيل Google Document Scanner:\n$e',
           error: true,
         );
       }
@@ -852,7 +871,7 @@ class _MainScannerScreenState
         rowHeight = math.max(
           rowHeight,
           item.heightMm,
-        );
+        ).toDouble();
       }
     });
   }
@@ -2688,625 +2707,4 @@ class _CropScreenState
     double imgT,
   ) {
     final p1 = Offset(
-      imgL + _x1 * imgW,
-      imgT + _y1 * imgH,
-    );
-
-    final p2 = Offset(
-      imgL + _x2 * imgW,
-      imgT + _y2 * imgH,
-    );
-
-    final p3 = Offset(
-      imgL + _x3 * imgW,
-      imgT + _y3 * imgH,
-    );
-
-    final p4 = Offset(
-      imgL + _x4 * imgW,
-      imgT + _y4 * imgH,
-    );
-
-    return [
-      Positioned(
-        left: imgL,
-        top: imgT,
-        width: imgW,
-        height: imgH,
-        child:
-            Image.memory(
-          _displayBytes,
-          fit:
-              BoxFit.fill,
-          gaplessPlayback:
-              true,
-        ),
-      ),
-
-      Positioned.fill(
-        child:
-            CustomPaint(
-          painter:
-              CropBoxPainter(
-            p1,
-            p2,
-            p3,
-            p4,
-          ),
-        ),
-      ),
-
-      _buildCornerDot(
-        _x1,
-        _y1,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (nx, ny) {
-          setState(() {
-            _x1 = nx;
-            _y1 = ny;
-          });
-        },
-      ),
-
-      _buildCornerDot(
-        _x2,
-        _y2,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (nx, ny) {
-          setState(() {
-            _x2 = nx;
-            _y2 = ny;
-          });
-        },
-      ),
-
-      _buildCornerDot(
-        _x3,
-        _y3,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (nx, ny) {
-          setState(() {
-            _x3 = nx;
-            _y3 = ny;
-          });
-        },
-      ),
-
-      _buildCornerDot(
-        _x4,
-        _y4,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (nx, ny) {
-          setState(() {
-            _x4 = nx;
-            _y4 = ny;
-          });
-        },
-      ),
-
-      _buildEdgeMidHandle(
-        _x1,
-        _y1,
-        _x2,
-        _y2,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (dnx, dny) {
-          setState(() {
-            _x1 =
-                (_x1 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y1 =
-                (_y1 + dny)
-                    .clamp(0.0, 1.0);
-
-            _x2 =
-                (_x2 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y2 =
-                (_y2 + dny)
-                    .clamp(0.0, 1.0);
-          });
-        },
-      ),
-
-      _buildEdgeMidHandle(
-        _x2,
-        _y2,
-        _x3,
-        _y3,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (dnx, dny) {
-          setState(() {
-            _x2 =
-                (_x2 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y2 =
-                (_y2 + dny)
-                    .clamp(0.0, 1.0);
-
-            _x3 =
-                (_x3 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y3 =
-                (_y3 + dny)
-                    .clamp(0.0, 1.0);
-          });
-        },
-      ),
-
-      _buildEdgeMidHandle(
-        _x3,
-        _y3,
-        _x4,
-        _y4,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (dnx, dny) {
-          setState(() {
-            _x3 =
-                (_x3 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y3 =
-                (_y3 + dny)
-                    .clamp(0.0, 1.0);
-
-            _x4 =
-                (_x4 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y4 =
-                (_y4 + dny)
-                    .clamp(0.0, 1.0);
-          });
-        },
-      ),
-
-      _buildEdgeMidHandle(
-        _x4,
-        _y4,
-        _x1,
-        _y1,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-        (dnx, dny) {
-          setState(() {
-            _x4 =
-                (_x4 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y4 =
-                (_y4 + dny)
-                    .clamp(0.0, 1.0);
-
-            _x1 =
-                (_x1 + dnx)
-                    .clamp(0.0, 1.0);
-
-            _y1 =
-                (_y1 + dny)
-                    .clamp(0.0, 1.0);
-          });
-        },
-      ),
-
-      _buildMagnifier(
-        cw,
-        ch,
-        imgL,
-        imgT,
-        imgW,
-        imgH,
-      ),
-    ];
-  }
-
-  /// =============================================================
-  /// EDGE HANDLE
-  /// =============================================================
-
-  Widget _buildEdgeMidHandle(
-    double ax,
-    double ay,
-    double bx,
-    double by,
-    double il,
-    double it,
-    double iw,
-    double ih,
-    void Function(
-      double dnx,
-      double dny,
-    ) onDelta,
-  ) {
-    final mx =
-        (ax + bx) / 2;
-
-    final my =
-        (ay + by) / 2;
-
-    final centerX =
-        il + mx * iw;
-
-    final centerY =
-        it + my * ih;
-
-    final isHorizontal =
-        (bx - ax).abs() >=
-            (by - ay).abs();
-
-    return Positioned(
-      left:
-          centerX - 14,
-      top:
-          centerY - 14,
-      child:
-          GestureDetector(
-        onPanStart: (_) {
-          setState(() {
-            _dragFocalPoint =
-                Offset(
-              centerX,
-              centerY,
-            );
-          });
-        },
-        onPanUpdate:
-            (details) {
-          onDelta(
-            details.delta.dx /
-                iw,
-            details.delta.dy /
-                ih,
-          );
-
-          setState(() {
-            _dragFocalPoint =
-                (_dragFocalPoint ??
-                        Offset(
-                          centerX,
-                          centerY,
-                        )) +
-                    details.delta;
-          });
-        },
-        onPanEnd: (_) {
-          setState(() {
-            _dragFocalPoint =
-                null;
-          });
-        },
-        child:
-            Container(
-          width: 28,
-          height: 28,
-          alignment:
-              Alignment.center,
-          child:
-              Container(
-            width:
-                isHorizontal
-                    ? 24
-                    : 10,
-            height:
-                isHorizontal
-                    ? 10
-                    : 24,
-            decoration:
-                BoxDecoration(
-              color:
-                  Colors.white,
-              borderRadius:
-                  BorderRadius.circular(
-                4,
-              ),
-              border:
-                  Border.all(
-                color:
-                    const Color(
-                  0xFF0284C7,
-                ),
-                width: 1.5,
-              ),
-              boxShadow: const [
-                BoxShadow(
-                  color:
-                      Colors.black38,
-                  blurRadius:
-                      3,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// =============================================================
-  /// MAGNIFIER
-  /// =============================================================
-
-  Widget _buildMagnifier(
-    double cw,
-    double ch,
-    double il,
-    double it,
-    double iw,
-    double ih,
-  ) {
-    if (_dragFocalPoint ==
-        null) {
-      return const SizedBox.shrink();
-    }
-
-    const double lensSize =
-        110;
-
-    const double zoom =
-        2.5;
-
-    final localX =
-        _dragFocalPoint!.dx -
-            il;
-
-    final localY =
-        _dragFocalPoint!.dy -
-            it;
-
-    final left =
-        (_dragFocalPoint!.dx -
-                lensSize / 2)
-            .clamp(
-      0.0,
-      math.max(
-        0.0,
-        cw - lensSize,
-      ),
-    );
-
-    double top =
-        _dragFocalPoint!.dy -
-            lensSize -
-            40;
-
-    if (top < 0) {
-      top = math.min(
-        _dragFocalPoint!.dy +
-            40,
-        math.max(
-          0.0,
-          ch - lensSize,
-        ),
-      );
-    }
-
-    return Positioned(
-      left: left,
-      top: top,
-      child:
-          IgnorePointer(
-        child:
-            Container(
-          width:
-              lensSize,
-          height:
-              lensSize,
-          decoration:
-              BoxDecoration(
-            shape:
-                BoxShape.circle,
-            border:
-                Border.all(
-              color:
-                  Colors.white,
-              width: 3,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color:
-                    Colors.black54,
-                blurRadius:
-                    8,
-              ),
-            ],
-          ),
-          child:
-              ClipOval(
-            child:
-                Stack(
-              children: [
-                Positioned(
-                  left:
-                      lensSize /
-                              2 -
-                          localX *
-                              zoom,
-                  top:
-                      lensSize /
-                              2 -
-                          localY *
-                              zoom,
-                  width:
-                      iw * zoom,
-                  height:
-                      ih * zoom,
-                  child:
-                      Image.memory(
-                    _displayBytes,
-                    fit:
-                        BoxFit.fill,
-                  ),
-                ),
-
-                Center(
-                  child:
-                      Container(
-                    width: 2,
-                    height: 16,
-                    color:
-                        const Color(
-                      0xFF0284C7,
-                    ),
-                  ),
-                ),
-
-                Center(
-                  child:
-                      Container(
-                    width: 16,
-                    height: 2,
-                    color:
-                        const Color(
-                      0xFF0284C7,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// =============================================================
-  /// CORNER HANDLE
-  /// =============================================================
-
-  Widget _buildCornerDot(
-    double rx,
-    double ry,
-    double il,
-    double it,
-    double iw,
-    double ih,
-    void Function(
-      double,
-      double,
-    ) onMove,
-  ) {
-    return Positioned(
-      left:
-          il + rx * iw - 18,
-      top:
-          it + ry * ih - 18,
-      child:
-          GestureDetector(
-        onPanStart: (_) {
-          setState(() {
-            _dragFocalPoint =
-                Offset(
-              il + rx * iw,
-              it + ry * ih,
-            );
-          });
-        },
-        onPanUpdate:
-            (details) {
-          final currentX =
-              il + rx * iw;
-
-          final currentY =
-              it + ry * ih;
-
-          onMove(
-            ((currentX +
-                        details.delta.dx -
-                    il) /
-                iw)
-                .clamp(
-              0.0,
-              1.0,
-            ),
-            ((currentY +
-                        details.delta.dy -
-                    it) /
-                ih)
-                .clamp(
-              0.0,
-              1.0,
-            ),
-          );
-
-          setState(() {
-            _dragFocalPoint =
-                (_dragFocalPoint ??
-                        Offset(
-                          currentX,
-                          currentY,
-                        )) +
-                    details.delta;
-          });
-        },
-        onPanEnd: (_) {
-          setState(() {
-            _dragFocalPoint =
-                null;
-          });
-        },
-        child:
-            Container(
-          width: 36,
-          height: 36,
-          decoration:
-              BoxDecoration(
-            color:
-                const Color(
-              0xFF0284C7,
-            ),
-            shape:
-                BoxShape.circle,
-            border:
-                Border.all(
-              color:
-                  Colors.white,
-              width: 2,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color:
-                    Colors.black45,
-                blurRadius:
-                    4,
-              ),
-            ],
-          ),
-          child:
-              const Icon(
-            Icons.control_camera,
-            size: 16,
-            color:
-                Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-}
+      imgL + _x1
