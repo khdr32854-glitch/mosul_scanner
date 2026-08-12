@@ -1,4 +1,4 @@
-name: build APK
+name: Build APK
 
 on:
   push:
@@ -14,96 +14,364 @@ jobs:
 
     steps:
 
+      # =========================================================
       # 1. تحميل المشروع
+      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. إعداد Java
+
+      # =========================================================
+      # 2. Java 17
+      # =========================================================
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
 
-      # 3. إعداد Flutter
+
+      # =========================================================
+      # 3. Flutter Stable
+      # =========================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # 4. بناء ملفات الأندرويد الناقصة
+
+      # =========================================================
+      # 4. فحص ملفات المشروع
+      # =========================================================
+      - name: Verify Project Files
+        run: |
+          echo "=========================================="
+          echo "PROJECT"
+          echo "=========================================="
+
+          test -f pubspec.yaml
+          test -f lib/main.dart
+          test -f lib/crop_engine.dart
+
+          echo "Project files OK."
+
+          echo ""
+          echo "=========================================="
+          echo "LIB"
+          echo "=========================================="
+
+          find lib -maxdepth 2 -type f -print
+
+
+      # =========================================================
+      # 5. تجهيز Android
+      # =========================================================
       - name: Prepare Android Project
         run: |
+          echo "=========================================="
+          echo "ANDROID"
+          echo "=========================================="
+
           if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-            flutter create --platforms=android --org=com.mosul --project-name=mosul_scanner .
+
+            echo "Android project missing."
+            echo "Creating Android project..."
+
+            flutter create \
+              --platforms=android \
+              --org=com.mosul \
+              --project-name=mosul_scanner \
+              .
+
+          else
+
+            echo "Android project already exists."
+            echo "Keeping existing Android project."
+
           fi
 
-      # 5. تحديث إصدار التطبيق الأساسي إلى 36
-      - name: Configure App SDK
+          test -f android/app/src/main/AndroidManifest.xml
+
+          echo "Android project OK."
+
+
+      # =========================================================
+      # 6. رفع compileSdk لـ 36 (يتطلبها opencv_dart >= 34)
+      #
+      # الملف android/app/build.gradle(.kts) يتولّد تلقائياً من
+      # الخطوة السابقة (flutter create) ولا يُحفظ بالريبو، لذلك
+      # يجب تعديله هنا بكل تشغيل بعد إنشائه مباشرة.
+      # =========================================================
+      - name: Configure Android SDK Levels
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          for p in [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]:
-              if p.exists():
-                  text = p.read_text()
-                  text = text.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 36")
-                  text = text.replace("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 36")
-                  p.write_text(text)
+
+          candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+
+          gradle_file = next(
+              (p for p in candidates if p.exists()), None
+          )
+
+          if gradle_file is None:
+              raise SystemExit(
+                  "android/app/build.gradle(.kts) not found"
+              )
+
+          text = gradle_file.read_text()
+          original = text
+
+          replacements = [
+              (
+                  "compileSdk = flutter.compileSdkVersion",
+                  "compileSdk = 36",
+              ),
+              (
+                  "compileSdkVersion flutter.compileSdkVersion",
+                  "compileSdkVersion 36",
+              ),
+              (
+                  "compileSdk flutter.compileSdkVersion",
+                  "compileSdk 36",
+              ),
+          ]
+
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new)
+
+          if text == original:
+              print(
+                  "WARNING: no known compileSdk pattern matched, "
+                  "printing file for manual inspection:"
+              )
+              print(text)
+              raise SystemExit(
+                  "compileSdk pattern not found in "
+                  + str(gradle_file)
+              )
+
+          gradle_file.write_text(text)
+
+          print(f"compileSdk updated to 36 in {gradle_file}")
           PY
 
-      # 6. إضافة صلاحية الكاميرا
+
+      # =========================================================
+      # 7. حذف اختبار Flutter الافتراضي
+      # =========================================================
+      - name: Remove Default Flutter Test
+        run: |
+          echo "Removing default Flutter test..."
+
+          rm -f test/widget_test.dart
+
+          if [ -d test ] && [ -z "$(ls -A test)" ]; then
+            rmdir test
+          fi
+
+          echo "Test cleanup completed."
+
+
+      # =========================================================
+      # 8. إضافة صلاحية الكاميرا
+      # =========================================================
       - name: Configure Camera Permission
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-          if manifest.exists():
-              text = manifest.read_text()
-              perm = '<uses-permission android:name="android.permission.CAMERA"/>'
-              if perm not in text:
-                  marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-                  text = text.replace(marker, marker + '\n    ' + perm)
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          text = manifest.read_text()
+
+          permission = (
+              '<uses-permission android:name="android.permission.CAMERA"/>'
+          )
+
+          if permission not in text:
+              marker = (
+                  '<manifest '
+                  'xmlns:android="http://schemas.android.com/apk/res/android">'
+              )
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker
+                      + '\n\n'
+                      + '    <uses-permission '
+                        'android:name="android.permission.CAMERA"/>',
+                      1
+                  )
+
                   manifest.write_text(text)
+
+          print("Camera permission configured.")
           PY
 
-      # 7. تنظيف مخلفات Flutter
+
+      # =========================================================
+      # 9. تعطيل محرك الرسم Impeller (الرجوع لـ Skia)
+      #
+      # Impeller (المفعّل افتراضياً بإصدارات Flutter الحديثة) له
+      # مشاكل موثّقة بأجهزة أندرويد معينة تسبب شاشات سوداء تماماً
+      # رغم صحة الكود. نضيف meta-data داخل <application> لتعطيله
+      # والرجوع لمحرك Skia الأقدم والأكثر استقراراً.
+      # =========================================================
+      - name: Disable Impeller Renderer
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          text = manifest.read_text()
+
+          meta = (
+              '<meta-data\n'
+              '            android:name='
+              '"io.flutter.embedding.android.EnableImpeller"\n'
+              '            android:value="false" />'
+          )
+
+          if 'EnableImpeller' not in text:
+              marker = "<application"
+
+              idx = text.find(marker)
+
+              if idx != -1:
+                  tag_end = text.find(">", idx)
+
+                  if tag_end != -1:
+                      text = (
+                          text[: tag_end + 1]
+                          + "\n        "
+                          + meta
+                          + text[tag_end + 1 :]
+                      )
+
+                      manifest.write_text(text)
+
+          print("Impeller disabled.")
+          PY
+
+
+      # =========================================================
+      # 10. فحص Manifest
+      # =========================================================
+      - name: Verify Android Manifest
+        run: |
+          echo "=========================================="
+          echo "ANDROID MANIFEST"
+          echo "=========================================="
+
+          test -f android/app/src/main/AndroidManifest.xml
+
+          grep -q \
+            'android.permission.CAMERA' \
+            android/app/src/main/AndroidManifest.xml
+
+          echo "Camera permission found."
+          echo ""
+          cat android/app/src/main/AndroidManifest.xml
+
+
+      # =========================================================
+      # 11. تنظيف Flutter
+      # =========================================================
       - name: Clean Flutter
         run: |
           flutter clean
-          rm -rf .dart_tool build test/widget_test.dart
 
-      # 8. تحميل المكتبات الخارجية (مثل opencv_dart)
+          rm -rf .dart_tool
+          rm -rf build
+
+          echo "Clean completed."
+
+
+      # =========================================================
+      # 12. تحميل المكتبات
+      # =========================================================
       - name: Get Dependencies
-        run: flutter pub get
-
-      # 9. الخطوة السحرية: تعديل كل المكتبات المحملة لتصبح بإصدار 36 بالقوة
-      - name: Patch Plugins SDK
         run: |
-          python3 - <<'PY'
-          import os, re
-          from pathlib import Path
-          pub_cache = Path(os.environ.get('PUB_CACHE', os.path.expanduser('~/.pub-cache')))
-          if pub_cache.exists():
-              for gradle_file in pub_cache.rglob("build.gradle*"):
-                  try:
-                      text = gradle_file.read_text(encoding="utf-8")
-                      new_text = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 36', text)
-                      new_text = re.sub(r'compileSdk\s+\d+', 'compileSdk 36', new_text)
-                      new_text = re.sub(r'compileSdk\s*=\s*\d+', 'compileSdk = 36', new_text)
-                      if text != new_text:
-                          gradle_file.write_text(new_text, encoding="utf-8")
-                  except Exception:
-                          pass
-          PY
+          flutter pub get
 
-      # 10. بناء التطبيق النهائي
+
+      # =========================================================
+      # 13. فحص Flutter
+      # =========================================================
+      - name: Flutter Version
+        run: |
+          flutter --version
+
+
+      # =========================================================
+      # 14. فحص Dependencies
+      # =========================================================
+      - name: Check Dependencies
+        run: |
+          flutter pub deps
+
+
+      # =========================================================
+      # 15. تحليل المشروع
+      #
+      # التحذيرات والمعلومات لن توقف البناء.
+      # الأخطاء الحقيقية ستظل ظاهرة.
+      # =========================================================
+      - name: Analyze
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+
+
+      # =========================================================
+      # 16. بناء APK
+      # =========================================================
       - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: |
+          echo "=========================================="
+          echo "BUILDING APK"
+          echo "=========================================="
 
-      # 11. رفع التطبيق للتحميل
+          flutter build apk \
+            --release \
+            --no-tree-shake-icons
+
+
+      # =========================================================
+      # 17. التأكد من APK
+      # =========================================================
+      - name: Verify APK
+        run: |
+          echo "=========================================="
+          echo "APK"
+          echo "=========================================="
+
+          ls -lh build/app/outputs/flutter-apk/
+
+          test -f \
+            build/app/outputs/flutter-apk/app-release.apk
+
+          echo ""
+          echo "APK CREATED SUCCESSFULLY."
+
+
+      # =========================================================
+      # 18. رفع APK
+      # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Mosul-Scanner-APK
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
