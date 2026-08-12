@@ -6,36 +6,28 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 
 /// ===============================================================
 /// MOSUL SCANNER
-/// GOOGLE ML KIT DOCUMENT SCANNER
+/// GOOGLE DOCUMENT SCANNER
 /// ===============================================================
 ///
-/// المسؤوليات:
-/// 1. فحص إمكانية تشغيل Google Document Scanner.
-/// 2. تشغيل الكاميرا أو المعرض.
-/// 3. عدم إخفاء PlatformException.
-/// 4. استخراج error code و native message.
-/// 5. التعامل الصحيح مع images == null.
-/// 6. إعطاء رسالة تشخيصية واضحة للـ main.dart.
+/// مسؤول فقط عن:
+/// - تشغيل Google ML Kit Document Scanner
+/// - استقبال الصور
+/// - فحص Google Play Services / Dynamic Module
+/// - عدم إخفاء الخطأ الأصلي
+///
+/// google_mlkit_document_scanner: ^0.5.0
 /// ===============================================================
 
 class GoogleScanResult {
   final bool success;
   final List<String> images;
 
-  /// كود الخطأ القادم من Flutter / Android.
   final String? errorCode;
-
-  /// الرسالة الأصلية القادمة من native Android.
   final String? nativeMessage;
-
-  /// تفاصيل إضافية مفيدة للتشخيص.
   final String? details;
 
-  /// هل المشكلة غالبًا من Google Play Services؟
-  final bool requiresGooglePlayServices;
-
-  /// هل المستخدم ألغى عملية المسح؟
   final bool cancelled;
+  final bool googleServicesProblem;
 
   const GoogleScanResult({
     required this.success,
@@ -43,84 +35,70 @@ class GoogleScanResult {
     this.errorCode,
     this.nativeMessage,
     this.details,
-    this.requiresGooglePlayServices = false,
     this.cancelled = false,
+    this.googleServicesProblem = false,
   });
 
   factory GoogleScanResult.success(List<String> images) {
     return GoogleScanResult(
       success: true,
-      images: List<String>.from(images),
+      images: images,
     );
   }
 
-  factory GoogleScanResult.empty() {
+  factory GoogleScanResult.cancelled() {
     return const GoogleScanResult(
       success: false,
-      images: <String>[],
       cancelled: true,
     );
   }
 
   factory GoogleScanResult.error({
     String? code,
-    String? nativeMessage,
+    String? message,
     String? details,
-    bool requiresGooglePlayServices = false,
+    bool googleServicesProblem = false,
   }) {
     return GoogleScanResult(
       success: false,
       errorCode: code,
-      nativeMessage: nativeMessage,
+      nativeMessage: message,
       details: details,
-      requiresGooglePlayServices: requiresGooglePlayServices,
+      googleServicesProblem: googleServicesProblem,
     );
   }
 
-  /// رسالة جاهزة للعرض للمستخدم.
-  String get userMessage {
+  String get displayMessage {
     if (cancelled) {
       return 'تم إلغاء عملية المسح.';
     }
 
-    if (requiresGooglePlayServices) {
-      return 'Google Document Scanner غير متاح على الجهاز حالياً.\n'
-          'تأكد من تحديث Google Play services والاتصال بالإنترنت، '
-          'ثم أعد تشغيل التطبيق.';
+    if (googleServicesProblem) {
+      return 'Google Document Scanner غير متاح على الجهاز حالياً.\n\n'
+          'كود الخطأ: ${errorCode ?? "غير معروف"}\n'
+          'رسالة النظام:\n${nativeMessage ?? "غير متوفرة"}';
     }
 
     if (errorCode != null || nativeMessage != null) {
-      final buffer = StringBuffer();
-
-      buffer.writeln('حدث خطأ أثناء تشغيل ماسح Google.');
-
-      if (errorCode != null && errorCode!.isNotEmpty) {
-        buffer.writeln('كود الخطأ: $errorCode');
-      }
-
-      if (nativeMessage != null && nativeMessage!.isNotEmpty) {
-        buffer.writeln('رسالة النظام: $nativeMessage');
-      }
-
-      return buffer.toString().trim();
+      return 'حدث خطأ أثناء تشغيل ماسح Google.\n\n'
+          'كود الخطأ: ${errorCode ?? "غير معروف"}\n'
+          'رسالة النظام:\n${nativeMessage ?? "غير متوفرة"}';
     }
 
-    return details ?? 'تعذر تشغيل Google Document Scanner.';
+    return 'تعذر تشغيل Google Document Scanner.';
   }
 
   @override
   String toString() {
-    return '''
-GoogleScanResult(
-  success: $success,
-  images: ${images.length},
-  errorCode: $errorCode,
-  nativeMessage: $nativeMessage,
-  details: $details,
-  requiresGooglePlayServices: $requiresGooglePlayServices,
-  cancelled: $cancelled,
-)
-''';
+    return 'GoogleScanResult('
+        'success: $success, '
+        'images: ${images.length}, '
+        'errorCode: $errorCode, '
+        'nativeMessage: $nativeMessage, '
+        'details: $details, '
+        'cancelled: $cancelled, '
+        'googleServicesProblem: $googleServicesProblem'
+        ')';
   }
 }
 
@@ -131,254 +109,236 @@ GoogleScanResult(
 class GoogleScanner {
   GoogleScanner._();
 
-  /// تشغيل Google Document Scanner.
-  ///
-  /// ملاحظة:
-  /// Google Document Scanner يعتمد على Google Play services،
-  /// والـ UI والنماذج يتم توفيرها من خدمات Google وليس من APK نفسه.
   static Future<GoogleScanResult> scan({
-    bool fromGallery = false,
     int pageLimit = 5,
   }) async {
     if (!Platform.isAndroid) {
       return GoogleScanResult.error(
         code: 'UNSUPPORTED_PLATFORM',
-        nativeMessage: 'Google ML Kit Document Scanner متاح على Android فقط.',
-        details: 'Current platform: ${Platform.operatingSystem}',
+        message: 'Google Document Scanner يعمل على Android فقط.',
       );
     }
 
     DocumentScanner? scanner;
 
     try {
-      debugPrint('=================================================');
+      debugPrint('');
+      debugPrint('==============================================');
       debugPrint('MOSUL SCANNER - GOOGLE DOCUMENT SCANNER');
-      debugPrint('=================================================');
-      debugPrint('Platform: ${Platform.operatingSystem}');
-      debugPrint('Gallery import: $fromGallery');
-      debugPrint('Page limit: $pageLimit');
-      debugPrint('Creating DocumentScanner...');
+      debugPrint('==============================================');
+      debugPrint('Creating Google Document Scanner...');
 
-      /// -----------------------------------------------------------
-      /// إعداد Google ML Kit
-      /// -----------------------------------------------------------
+      final int safePageLimit = pageLimit.clamp(1, 20).toInt();
+
       final options = DocumentScannerOptions(
-        documentFormats: const {
+        documentFormats: {
           DocumentFormat.jpeg,
           DocumentFormat.pdf,
         },
         mode: ScannerMode.full,
-        pageLimit: pageLimit.clamp(1, 20),
+        pageLimit: safePageLimit,
+
+        // مهم:
+        // تفعيل استيراد الصور من المعرض.
         isGalleryImport: true,
       );
 
-      debugPrint('Options:');
-      debugPrint('  formats: JPEG + PDF');
-      debugPrint('  mode: full');
-      debugPrint('  pageLimit: ${pageLimit.clamp(1, 20)}');
-      debugPrint('  galleryImport: true');
+      debugPrint('Options created.');
+      debugPrint('Page limit: $safePageLimit');
+      debugPrint('Gallery import: true');
+      debugPrint('Mode: full');
 
-      scanner = DocumentScanner(options: options);
+      scanner = DocumentScanner(
+        options: options,
+      );
 
-      debugPrint('DocumentScanner created successfully.');
-      debugPrint('Calling scanDocument()...');
+      debugPrint('DocumentScanner created.');
+      debugPrint('Starting scanDocument()...');
 
-      /// -----------------------------------------------------------
-      /// تشغيل Google UI
-      /// -----------------------------------------------------------
       final result = await scanner.scanDocument();
 
-      debugPrint('scanDocument() returned successfully.');
+      debugPrint('scanDocument() returned.');
 
       /// -----------------------------------------------------------
-      /// images في الإصدار 0.5.0 nullable.
+      /// images nullable في نسخة 0.5.0
       /// -----------------------------------------------------------
-      final List<String>? nullableImages = result.images;
 
-      if (nullableImages == null) {
-        debugPrint('WARNING: result.images == null');
+      final List<String>? resultImages = result.images;
+
+      if (resultImages == null) {
+        debugPrint('ERROR: result.images == null');
 
         return GoogleScanResult.error(
           code: 'NULL_IMAGES',
-          nativeMessage:
-              'Google Document Scanner returned a null images list.',
+          message:
+              'Google returned a null images list.',
           details:
-              'DocumentFormat.jpeg is enabled, but the native result contained null images.',
+              'JPEG was requested but Google returned null images.',
         );
       }
 
-      final images = List<String>.from(nullableImages);
-
-      debugPrint('Images returned: ${images.length}');
-
-      if (images.isEmpty) {
+      if (resultImages.isEmpty) {
         debugPrint('No images returned.');
 
-        return GoogleScanResult.empty();
+        return GoogleScanResult.cancelled();
       }
 
-      /// -----------------------------------------------------------
-      /// التأكد من وجود الملفات فعليًا.
-      /// -----------------------------------------------------------
-      final validImages = <String>[];
+      debugPrint(
+        'Google returned ${resultImages.length} image(s).',
+      );
 
-      for (final path in images) {
-        debugPrint('Checking image: $path');
+      /// -----------------------------------------------------------
+      /// فحص الملفات
+      /// -----------------------------------------------------------
 
+      final List<String> validImages = <String>[];
+
+      for (final path in resultImages) {
         try {
           final file = File(path);
+
           final exists = await file.exists();
 
-          debugPrint('  exists: $exists');
+          debugPrint('Image: $path');
+          debugPrint('Exists: $exists');
 
-          if (exists) {
-            final size = await file.length();
-            debugPrint('  size: $size bytes');
-
-            if (size > 0) {
-              validImages.add(path);
-            }
+          if (!exists) {
+            continue;
           }
-        } catch (e, stack) {
-          debugPrint('Error checking image file: $e');
-          debugPrint('$stack');
+
+          final size = await file.length();
+
+          debugPrint('Size: $size bytes');
+
+          if (size > 0) {
+            validImages.add(path);
+          }
+        } catch (e) {
+          debugPrint(
+            'Error checking image: $e',
+          );
         }
       }
 
       if (validImages.isEmpty) {
         return GoogleScanResult.error(
           code: 'NO_VALID_IMAGES',
-          nativeMessage:
-              'Scanner completed but no valid image files were returned.',
-          details:
-              'Google returned ${images.length} image path(s), but none could be verified.',
+          message:
+              'Google scanner returned image paths but no valid files were found.',
         );
       }
 
-      debugPrint('Valid images: ${validImages.length}');
-      debugPrint('Google Scanner completed successfully.');
-      debugPrint('=================================================');
+      debugPrint(
+        'Valid images: ${validImages.length}',
+      );
 
-      return GoogleScanResult.success(validImages);
+      debugPrint(
+        'Google Document Scanner completed successfully.',
+      );
+
+      debugPrint('==============================================');
+
+      return GoogleScanResult.success(
+        validImages,
+      );
     }
 
     /// =============================================================
     /// PLATFORM EXCEPTION
     /// =============================================================
-    on PlatformException catch (e, stack) {
-      final code = e.code;
-      final message = e.message;
-      final details = e.details;
 
-      debugPrint('=================================================');
-      debugPrint('GOOGLE DOCUMENT SCANNER PLATFORM EXCEPTION');
-      debugPrint('=================================================');
+    on PlatformException catch (e, stackTrace) {
+      final String code = e.code;
+      final String message = e.message ?? '';
+      final String details = e.details?.toString() ?? '';
+
+      debugPrint('');
+      debugPrint('==============================================');
+      debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
+      debugPrint('==============================================');
 
       debugPrint('ERROR CODE: $code');
       debugPrint('NATIVE MESSAGE: $message');
       debugPrint('DETAILS: $details');
-      debugPrint('RUNTIME TYPE: ${e.runtimeType}');
+      debugPrint('TYPE: ${e.runtimeType}');
 
       debugPrint('STACK TRACE:');
-      debugPrint('$stack');
+      debugPrint(stackTrace.toString());
 
-      /// -----------------------------------------------------------
-      /// نحاول معرفة إذا كان الخطأ متعلقًا بـ Google Play services.
-      /// -----------------------------------------------------------
-      final combined = [
-        code,
-        message,
-        details?.toString(),
-      ].whereType<String>().join(' ').toLowerCase();
+      debugPrint('==============================================');
 
-      final playServicesProblem =
+      final String combined =
+          '$code $message $details'.toLowerCase();
+
+      final bool googleProblem =
           combined.contains('play services') ||
           combined.contains('play_services') ||
-          combined.contains('module') ||
           combined.contains('dynamic') ||
+          combined.contains('module') ||
           combined.contains('availability') ||
           combined.contains('download') ||
           combined.contains('install') ||
           combined.contains('nullpointerexception');
 
-      debugPrint(
-        'LIKELY GOOGLE PLAY SERVICES PROBLEM: $playServicesProblem',
-      );
-
-      debugPrint('=================================================');
-
       return GoogleScanResult.error(
         code: code,
-        nativeMessage: message ?? e.toString(),
-        details: details?.toString(),
-        requiresGooglePlayServices: playServicesProblem,
+        message: message.isEmpty ? e.toString() : message,
+        details: details,
+        googleServicesProblem: googleProblem,
       );
     }
 
     /// =============================================================
-    /// NULL POINTER EXCEPTION
+    /// أي خطأ آخر
     /// =============================================================
-    on NullThrownError catch (e, stack) {
-      debugPrint('=================================================');
-      debugPrint('GOOGLE SCANNER NULL THROWN ERROR');
-      debugPrint('=================================================');
-      debugPrint('ERROR: $e');
-      debugPrint('STACK:');
-      debugPrint('$stack');
-      debugPrint('=================================================');
 
-      return GoogleScanResult.error(
-        code: 'DART_NULL_ERROR',
-        nativeMessage: e.toString(),
-        details: 'A Dart null error occurred while starting the scanner.',
-      );
-    }
+    catch (e, stackTrace) {
+      final String error = e.toString();
 
-    /// =============================================================
-    /// كل الأخطاء الأخرى
-    /// =============================================================
-    catch (e, stack) {
-      final errorString = e.toString();
-
-      debugPrint('=================================================');
+      debugPrint('');
+      debugPrint('==============================================');
       debugPrint('GOOGLE DOCUMENT SCANNER UNKNOWN ERROR');
-      debugPrint('=================================================');
-      debugPrint('ERROR: $errorString');
+      debugPrint('==============================================');
+
+      debugPrint('ERROR: $error');
       debugPrint('TYPE: ${e.runtimeType}');
+
       debugPrint('STACK TRACE:');
-      debugPrint('$stack');
-      debugPrint('=================================================');
+      debugPrint(stackTrace.toString());
 
-      final lower = errorString.toLowerCase();
+      debugPrint('==============================================');
 
-      final playServicesProblem =
+      final String lower = error.toLowerCase();
+
+      final bool googleProblem =
           lower.contains('play services') ||
           lower.contains('play_services') ||
-          lower.contains('nullpointerexception') ||
-          lower.contains('dynamic module') ||
-          lower.contains('module');
+          lower.contains('dynamic') ||
+          lower.contains('module') ||
+          lower.contains('nullpointerexception');
 
       return GoogleScanResult.error(
         code: 'UNKNOWN_ERROR',
-        nativeMessage: errorString,
-        details:
-            'Unhandled exception type: ${e.runtimeType}',
-        requiresGooglePlayServices: playServicesProblem,
+        message: error,
+        googleServicesProblem: googleProblem,
       );
     }
 
     /// =============================================================
-    /// إغلاق scanner
+    /// إغلاق Google Scanner
     /// =============================================================
+
     finally {
       if (scanner != null) {
         try {
-          debugPrint('Closing DocumentScanner...');
           await scanner.close();
-          debugPrint('DocumentScanner closed.');
-        } catch (e, stack) {
-          debugPrint('Error while closing DocumentScanner: $e');
-          debugPrint('$stack');
+          debugPrint(
+            'Google Document Scanner closed.',
+          );
+        } catch (e) {
+          debugPrint(
+            'Error closing Google Scanner: $e',
+          );
         }
       }
     }
