@@ -6,99 +6,75 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 
 /// ===============================================================
 /// MOSUL SCANNER
-/// GOOGLE DOCUMENT SCANNER
+/// GOOGLE ML KIT DOCUMENT SCANNER
 /// ===============================================================
 ///
-/// مسؤول فقط عن:
-/// - تشغيل Google ML Kit Document Scanner
-/// - استقبال الصور
-/// - فحص Google Play Services / Dynamic Module
-/// - عدم إخفاء الخطأ الأصلي
+/// متوافق مع main.dart الحالي.
 ///
-/// google_mlkit_document_scanner: ^0.5.0
+/// الوظائف:
+/// - تشغيل Google Document Scanner
+/// - Camera
+/// - Gallery
+/// - تشخيص PlatformException
+/// - كشف NullPointerException
+/// - إرجاع status / message / isSuccess
+/// - عدم إخفاء الخطأ الحقيقي
 /// ===============================================================
 
+enum GoogleScanStatus {
+  success,
+  cancelled,
+  unavailable,
+  error,
+}
+
+/// نتيجة Google Scanner
 class GoogleScanResult {
-  final bool success;
+  final GoogleScanStatus status;
+
+  final String message;
+
   final List<String> images;
 
   final String? errorCode;
+
   final String? nativeMessage;
+
   final String? details;
 
-  final bool cancelled;
-  final bool googleServicesProblem;
-
   const GoogleScanResult({
-    required this.success,
+    required this.status,
+    required this.message,
     this.images = const <String>[],
     this.errorCode,
     this.nativeMessage,
     this.details,
-    this.cancelled = false,
-    this.googleServicesProblem = false,
   });
 
-  factory GoogleScanResult.success(List<String> images) {
-    return GoogleScanResult(
-      success: true,
-      images: images,
-    );
-  }
+  /// نجاح العملية
+  bool get isSuccess => status == GoogleScanStatus.success;
 
-  factory GoogleScanResult.cancelled() {
-    return const GoogleScanResult(
-      success: false,
-      cancelled: true,
-    );
-  }
+  /// هل العملية ألغيت؟
+  bool get isCancelled => status == GoogleScanStatus.cancelled;
 
-  factory GoogleScanResult.error({
-    String? code,
-    String? message,
-    String? details,
-    bool googleServicesProblem = false,
-  }) {
-    return GoogleScanResult(
-      success: false,
-      errorCode: code,
-      nativeMessage: message,
-      details: details,
-      googleServicesProblem: googleServicesProblem,
-    );
-  }
+  /// هل Google Scanner غير متاح؟
+  bool get isUnavailable => status == GoogleScanStatus.unavailable;
 
-  String get displayMessage {
-    if (cancelled) {
-      return 'تم إلغاء عملية المسح.';
-    }
-
-    if (googleServicesProblem) {
-      return 'Google Document Scanner غير متاح على الجهاز حالياً.\n\n'
-          'كود الخطأ: ${errorCode ?? "غير معروف"}\n'
-          'رسالة النظام:\n${nativeMessage ?? "غير متوفرة"}';
-    }
-
-    if (errorCode != null || nativeMessage != null) {
-      return 'حدث خطأ أثناء تشغيل ماسح Google.\n\n'
-          'كود الخطأ: ${errorCode ?? "غير معروف"}\n'
-          'رسالة النظام:\n${nativeMessage ?? "غير متوفرة"}';
-    }
-
-    return 'تعذر تشغيل Google Document Scanner.';
-  }
+  /// هل يوجد خطأ؟
+  bool get hasError => status == GoogleScanStatus.error;
 
   @override
   String toString() {
-    return 'GoogleScanResult('
-        'success: $success, '
-        'images: ${images.length}, '
-        'errorCode: $errorCode, '
-        'nativeMessage: $nativeMessage, '
-        'details: $details, '
-        'cancelled: $cancelled, '
-        'googleServicesProblem: $googleServicesProblem'
-        ')';
+    return '''
+GoogleScanResult
+status: $status
+isSuccess: $isSuccess
+message: $message
+images: ${images.length}
+errorCode: $errorCode
+nativeMessage: $nativeMessage
+details: $details
+''';
   }
 }
 
@@ -109,13 +85,28 @@ class GoogleScanResult {
 class GoogleScanner {
   GoogleScanner._();
 
+  /// =============================================================
+  /// scan
+  /// =============================================================
+  ///
+  /// fromGallery:
+  /// true  = السماح باستيراد الصور من المعرض
+  /// false = تشغيل الماسح بالطريقة العادية
+  ///
+  /// مهم:
+  /// Google نفسها تعرض خيار المعرض عندما يكون
+  /// isGalleryImport = true.
+  /// =============================================================
+
   static Future<GoogleScanResult> scan({
+    bool fromGallery = false,
     int pageLimit = 5,
   }) async {
     if (!Platform.isAndroid) {
-      return GoogleScanResult.error(
-        code: 'UNSUPPORTED_PLATFORM',
-        message: 'Google Document Scanner يعمل على Android فقط.',
+      return const GoogleScanResult(
+        status: GoogleScanStatus.unavailable,
+        message:
+            'Google Document Scanner متاح على أجهزة Android فقط.',
       );
     }
 
@@ -124,83 +115,134 @@ class GoogleScanner {
     try {
       debugPrint('');
       debugPrint('==============================================');
-      debugPrint('MOSUL SCANNER - GOOGLE DOCUMENT SCANNER');
+      debugPrint('MOSUL SCANNER');
+      debugPrint('GOOGLE DOCUMENT SCANNER');
       debugPrint('==============================================');
-      debugPrint('Creating Google Document Scanner...');
 
-      final int safePageLimit = pageLimit.clamp(1, 20).toInt();
+      debugPrint('fromGallery: $fromGallery');
+      debugPrint('pageLimit: $pageLimit');
+
+      /// -----------------------------------------------------------
+      /// إعداد Google Scanner
+      /// -----------------------------------------------------------
 
       final options = DocumentScannerOptions(
         documentFormats: {
           DocumentFormat.jpeg,
           DocumentFormat.pdf,
         },
-        mode: ScannerMode.full,
-        pageLimit: safePageLimit,
 
-        // مهم:
-        // تفعيل استيراد الصور من المعرض.
+        mode: ScannerMode.full,
+
+        pageLimit: pageLimit.clamp(1, 20),
+
+        /// إذا كان true يستطيع Google عرض Gallery Import.
         isGalleryImport: true,
       );
 
-      debugPrint('Options created.');
-      debugPrint('Page limit: $safePageLimit');
-      debugPrint('Gallery import: true');
-      debugPrint('Mode: full');
+      debugPrint('DocumentScannerOptions created.');
+
+      debugPrint(
+        'isGalleryImport: ${options.isGalleryImport}',
+      );
+
+      debugPrint(
+        'pageLimit: ${options.pageLimit}',
+      );
+
+      debugPrint(
+        'mode: ${options.mode}',
+      );
+
+      /// -----------------------------------------------------------
+      /// إنشاء Scanner
+      /// -----------------------------------------------------------
 
       scanner = DocumentScanner(
         options: options,
       );
 
-      debugPrint('DocumentScanner created.');
-      debugPrint('Starting scanDocument()...');
-
-      final result = await scanner.scanDocument();
-
-      debugPrint('scanDocument() returned.');
-
-      /// -----------------------------------------------------------
-      /// images nullable في نسخة 0.5.0
-      /// -----------------------------------------------------------
-
-      final List<String>? resultImages = result.images;
-
-      if (resultImages == null) {
-        debugPrint('ERROR: result.images == null');
-
-        return GoogleScanResult.error(
-          code: 'NULL_IMAGES',
-          message:
-              'Google returned a null images list.',
-          details:
-              'JPEG was requested but Google returned null images.',
-        );
-      }
-
-      if (resultImages.isEmpty) {
-        debugPrint('No images returned.');
-
-        return GoogleScanResult.cancelled();
-      }
+      debugPrint(
+        'DocumentScanner object created.',
+      );
 
       debugPrint(
-        'Google returned ${resultImages.length} image(s).',
+        'Calling scanDocument()...',
       );
 
       /// -----------------------------------------------------------
-      /// فحص الملفات
+      /// تشغيل Google UI
+      /// -----------------------------------------------------------
+
+      final result = await scanner.scanDocument();
+
+      debugPrint(
+        'scanDocument() returned.',
+      );
+
+      /// -----------------------------------------------------------
+      /// قراءة الصور
+      /// -----------------------------------------------------------
+
+      final List<String>? nullableImages = result.images;
+
+      if (nullableImages == null) {
+        debugPrint(
+          'Google returned images == null',
+        );
+
+        return const GoogleScanResult(
+          status: GoogleScanStatus.error,
+          message:
+              'Google Document Scanner أعاد نتيجة بدون قائمة صور.',
+          errorCode: 'NULL_IMAGES',
+          nativeMessage:
+              'DocumentScanningResult.images == null',
+        );
+      }
+
+      final List<String> images =
+          List<String>.from(nullableImages);
+
+      debugPrint(
+        'Returned images: ${images.length}',
+      );
+
+      /// -----------------------------------------------------------
+      /// المستخدم أغلق Scanner بدون نتيجة
+      /// -----------------------------------------------------------
+
+      if (images.isEmpty) {
+        debugPrint(
+          'Scanner closed or no images selected.',
+        );
+
+        return const GoogleScanResult(
+          status: GoogleScanStatus.cancelled,
+          message:
+              'تم إلغاء عملية المسح أو لم يتم اختيار صورة.',
+        );
+      }
+
+      /// -----------------------------------------------------------
+      /// التحقق من الملفات
       /// -----------------------------------------------------------
 
       final List<String> validImages = <String>[];
 
-      for (final path in resultImages) {
+      for (final path in images) {
         try {
           final file = File(path);
 
           final exists = await file.exists();
 
-          debugPrint('Image: $path');
-          debugPrint('Exists: $exists');
+          debugPrint(
+            'Image: $path',
+          );
+
+          debugPrint(
+            'Exists: $exists',
+          );
 
           if (!exists) {
             continue;
@@ -208,38 +250,56 @@ class GoogleScanner {
 
           final size = await file.length();
 
-          debugPrint('Size: $size bytes');
+          debugPrint(
+            'Size: $size bytes',
+          );
 
           if (size > 0) {
             validImages.add(path);
           }
-        } catch (e) {
+        } catch (e, stack) {
           debugPrint(
-            'Error checking image: $e',
+            'Image validation error: $e',
+          );
+
+          debugPrint(
+            stack.toString(),
           );
         }
       }
 
+      /// -----------------------------------------------------------
+      /// لم نجد ملفات صالحة
+      /// -----------------------------------------------------------
+
       if (validImages.isEmpty) {
-        return GoogleScanResult.error(
-          code: 'NO_VALID_IMAGES',
+        return const GoogleScanResult(
+          status: GoogleScanStatus.error,
           message:
-              'Google scanner returned image paths but no valid files were found.',
+              'Google Scanner انتهى، لكن لم يتم العثور على ملفات صور صالحة.',
+          errorCode: 'NO_VALID_IMAGES',
         );
       }
+
+      /// -----------------------------------------------------------
+      /// نجاح
+      /// -----------------------------------------------------------
 
       debugPrint(
         'Valid images: ${validImages.length}',
       );
 
       debugPrint(
-        'Google Document Scanner completed successfully.',
+        'Google Scanner SUCCESS',
       );
 
       debugPrint('==============================================');
 
-      return GoogleScanResult.success(
-        validImages,
+      return GoogleScanResult(
+        status: GoogleScanStatus.success,
+        message:
+            'تم المسح بواسطة Google Document Scanner بنجاح.',
+        images: validImages,
       );
     }
 
@@ -247,44 +307,113 @@ class GoogleScanner {
     /// PLATFORM EXCEPTION
     /// =============================================================
 
-    on PlatformException catch (e, stackTrace) {
+    on PlatformException catch (e, stack) {
       final String code = e.code;
-      final String message = e.message ?? '';
-      final String details = e.details?.toString() ?? '';
+
+      final String nativeMessage =
+          e.message ?? '';
+
+      final String details =
+          e.details?.toString() ?? '';
 
       debugPrint('');
       debugPrint('==============================================');
-      debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
+      debugPrint(
+        'GOOGLE DOCUMENT SCANNER PLATFORM EXCEPTION',
+      );
       debugPrint('==============================================');
 
-      debugPrint('ERROR CODE: $code');
-      debugPrint('NATIVE MESSAGE: $message');
-      debugPrint('DETAILS: $details');
-      debugPrint('TYPE: ${e.runtimeType}');
+      debugPrint(
+        'CODE: $code',
+      );
 
-      debugPrint('STACK TRACE:');
-      debugPrint(stackTrace.toString());
+      debugPrint(
+        'MESSAGE: $nativeMessage',
+      );
+
+      debugPrint(
+        'DETAILS: $details',
+      );
+
+      debugPrint(
+        'ERROR: $e',
+      );
+
+      debugPrint(
+        'STACK TRACE:',
+      );
+
+      debugPrint(
+        stack.toString(),
+      );
 
       debugPrint('==============================================');
+
+      /// -----------------------------------------------------------
+      /// تحديد الأخطاء المرتبطة بـ Google Play Services
+      /// -----------------------------------------------------------
 
       final String combined =
-          '$code $message $details'.toLowerCase();
+          '$code $nativeMessage $details'
+              .toLowerCase();
 
-      final bool googleProblem =
-          combined.contains('play services') ||
-          combined.contains('play_services') ||
-          combined.contains('dynamic') ||
-          combined.contains('module') ||
-          combined.contains('availability') ||
-          combined.contains('download') ||
-          combined.contains('install') ||
-          combined.contains('nullpointerexception');
+      final bool googleUnavailable =
+          combined.contains(
+                'play services',
+              ) ||
+          combined.contains(
+                'play_services',
+              ) ||
+          combined.contains(
+                'dynamic module',
+              ) ||
+          combined.contains(
+                'dynamic',
+              ) ||
+          combined.contains(
+                'module',
+              ) ||
+          combined.contains(
+                'availability',
+              ) ||
+          combined.contains(
+                'download',
+              ) ||
+          combined.contains(
+                'install',
+              ) ||
+          combined.contains(
+                'nullpointerexception',
+              );
 
-      return GoogleScanResult.error(
-        code: code,
-        message: message.isEmpty ? e.toString() : message,
+      if (googleUnavailable) {
+        return GoogleScanResult(
+          status: GoogleScanStatus.unavailable,
+          message:
+              'Google Document Scanner غير متاح على الجهاز حالياً.\n\n'
+              'كود الخطأ: $code\n'
+              'رسالة النظام: '
+              '${nativeMessage.isEmpty ? "غير متوفرة" : nativeMessage}',
+          errorCode: code,
+          nativeMessage: nativeMessage,
+          details: details,
+        );
+      }
+
+      /// -----------------------------------------------------------
+      /// خطأ Native عادي
+      /// -----------------------------------------------------------
+
+      return GoogleScanResult(
+        status: GoogleScanStatus.error,
+        message:
+            'حدث خطأ أثناء تشغيل Google Document Scanner.\n\n'
+            'كود الخطأ: $code\n'
+            'رسالة النظام: '
+            '${nativeMessage.isEmpty ? "غير متوفرة" : nativeMessage}',
+        errorCode: code,
+        nativeMessage: nativeMessage,
         details: details,
-        googleServicesProblem: googleProblem,
       );
     }
 
@@ -292,52 +421,88 @@ class GoogleScanner {
     /// أي خطأ آخر
     /// =============================================================
 
-    catch (e, stackTrace) {
-      final String error = e.toString();
+    catch (e, stack) {
+      final String error =
+          e.toString();
 
       debugPrint('');
       debugPrint('==============================================');
-      debugPrint('GOOGLE DOCUMENT SCANNER UNKNOWN ERROR');
+      debugPrint(
+        'GOOGLE DOCUMENT SCANNER UNKNOWN ERROR',
+      );
       debugPrint('==============================================');
 
-      debugPrint('ERROR: $error');
-      debugPrint('TYPE: ${e.runtimeType}');
+      debugPrint(
+        'TYPE: ${e.runtimeType}',
+      );
 
-      debugPrint('STACK TRACE:');
-      debugPrint(stackTrace.toString());
+      debugPrint(
+        'ERROR: $error',
+      );
+
+      debugPrint(
+        'STACK TRACE:',
+      );
+
+      debugPrint(
+        stack.toString(),
+      );
 
       debugPrint('==============================================');
 
-      final String lower = error.toLowerCase();
+      final String lower =
+          error.toLowerCase();
 
-      final bool googleProblem =
-          lower.contains('play services') ||
-          lower.contains('play_services') ||
-          lower.contains('dynamic') ||
-          lower.contains('module') ||
-          lower.contains('nullpointerexception');
+      final bool googleUnavailable =
+          lower.contains(
+                'play services',
+              ) ||
+          lower.contains(
+                'play_services',
+              ) ||
+          lower.contains(
+                'dynamic module',
+              ) ||
+          lower.contains(
+                'nullpointerexception',
+              );
 
-      return GoogleScanResult.error(
-        code: 'UNKNOWN_ERROR',
-        message: error,
-        googleServicesProblem: googleProblem,
+      if (googleUnavailable) {
+        return GoogleScanResult(
+          status: GoogleScanStatus.unavailable,
+          message:
+              'Google Document Scanner غير متاح على الجهاز حالياً.\n\n'
+              'الخطأ الأصلي:\n$error',
+          errorCode: 'UNKNOWN_GOOGLE_ERROR',
+          nativeMessage: error,
+        );
+      }
+
+      return GoogleScanResult(
+        status: GoogleScanStatus.error,
+        message:
+            'خطأ غير متوقع في Google Document Scanner.\n\n'
+            '$error',
+        errorCode: 'UNKNOWN_ERROR',
+        nativeMessage: error,
       );
     }
 
     /// =============================================================
-    /// إغلاق Google Scanner
+    /// CLOSE
     /// =============================================================
 
     finally {
       if (scanner != null) {
         try {
           await scanner.close();
+
           debugPrint(
             'Google Document Scanner closed.',
           );
         } catch (e) {
           debugPrint(
-            'Error closing Google Scanner: $e',
+            'Scanner close error: $e',
           );
         }
       }
