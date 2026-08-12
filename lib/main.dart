@@ -2097,8 +2097,11 @@ class _CropScreenState
     BuildContext context,
   ) {
     return Scaffold(
+      // اختبار تشخيصي مؤقت: لون فاقع بدل الأسود. إذا بقيت
+      // المنطقة سوداء رغم هذا، فهناك طبقة أخرى غير مرتبطة بهذا
+      // الودجت ترسم فوقها بالكامل.
       backgroundColor:
-          Colors.black,
+          Colors.pinkAccent,
 
       appBar: AppBar(
         backgroundColor:
