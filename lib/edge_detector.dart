@@ -24,7 +24,7 @@ class DocumentEdgeDetector {
       // 1. تحويل الصورة إلى تدرج رمادي
       gray = cv.cvtColor(original, cv.COLOR_BGR2GRAY);
 
-      // 2. استخدام Bilateral Filter لحفظ الحواف الحقيقية وإزالة تفاصيل الخلفية المشتتة (مثل خطوط الخشب أو القماش)
+      // 2. استخدام Bilateral Filter لحفظ الحواف الحقيقية وإزالة تفاصيل الخلفية المشتتة
       blurred = cv.bilateralFilter(gray, 9, 75, 75);
 
       // 3. تقوية التباين باستخدام Adaptive Thresholding لتجاوز مشاكل الإضاءة والظلال
@@ -40,7 +40,7 @@ class DocumentEdgeDetector {
       // 4. استخراج الحواف بمرونة أعلى
       edges = cv.canny(thresh, 30, 100);
 
-      // 5. استخدام RETR_EXTERNAL لجلب الحدود الخارجية الكبرى فقط وتجنب تفاصيل الخلفية الداخلية
+      // 5. استخدام RETR_EXTERNAL لجلب الحدود الخارجية الكبرى فقط
       final (contours, _) = cv.findContours(
         edges,
         cv.RETR_EXTERNAL,
@@ -61,12 +61,12 @@ class DocumentEdgeDetector {
         }
 
         final perimeter = cv.arcLength(contour, true);
+        
         // تجربة عدة نسب تبسيط للوصول لشكل رباعي دقيق
         for (double factor in [0.01, 0.02, 0.03, 0.04, 0.05]) {
           final approx = cv.approxPolyDP(contour, factor * perimeter, true);
 
           if (approx.length == 4) {
-            // التحقق من أن الشكل مقعر/محدب ومنتظم نسبياً وليس خطاً مستقيماً رفيعاً
             if (area > maxArea && cv.isContourConvex(approx)) {
               maxArea = area;
               bestQuad = approx.toList();
@@ -83,10 +83,11 @@ class DocumentEdgeDetector {
           if (area > maxArea && area > imageArea * 0.15) {
             final perimeter = cv.arcLength(contour, true);
             final approx = cv.approxPolyDP(contour, 0.02 * perimeter, true);
+            
             if (approx.length >= 4 && approx.length <= 6) {
-              // أخذ الزوايا الأربع الرئيسية من المضلع
               maxArea = area;
-              bestQuad = approx.sublist(0, 4).toList();
+              // تم الإصلاح: تحويل VecPoint إلى List أولاً ثم استخدام sublist
+              bestQuad = approx.toList().sublist(0, 4);
             }
           }
         }
@@ -109,11 +110,12 @@ class DocumentEdgeDetector {
   }
 
   static List<Offset> _orderCorners(List<cv.Point> points) {
+    // تم الإصلاح: إزالة (?? 0) لأن المتغيرات x و y غير قابلة لتكون null في opencv_dart
     final offsets = points
         .map(
           (p) => Offset(
-            (p.x ?? 0).toDouble(),
-            (p.y ?? 0).toDouble(),
+            p.x.toDouble(),
+            p.y.toDouble(),
           ),
         )
         .toList();
