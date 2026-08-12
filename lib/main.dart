@@ -15,15 +15,12 @@ import 'perspective_warp.dart';
 
 /// ===============================================================
 /// ISOLATES (TOP-LEVEL FUNCTIONS)
-/// دوال المعالجة في الخلفية لمنع تجميد واجهة المستخدم
 /// ===============================================================
 
-// 1. فك تشفير الصورة في الخلفية
 img.Image? decodeImageIsolate(Uint8List bytes) {
   return ImageUtils.decodeBytes(bytes);
 }
 
-// 2. معالجة المعاينة وتجهيزها للعرض في شاشة القص
 Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
   final img.Image source = args['image'];
   final EnhanceMode mode = args['mode'];
@@ -31,18 +28,21 @@ Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
 
   final processed = ImageEnhancer.apply(source, mode, intensity);
 
-  // الحل الجذري للشاشة السوداء: نستخدم JPEG لأن دالة ImageUtils
-  // تقوم بتحويل القنوات من 4 (RGBA) إلى 3 (RGB) مما يلغي الشفافية الوهمية المسببة للسواد.
-  final bytes = ImageUtils.encodeJpg(processed, quality: 85);
+  // إزالة قناة الشفافية إن وجدت لمنع ظهور الشاشة السوداء في محرك Skia
+  img.Image noAlpha = processed;
+  if (processed.numChannels == 4) {
+    noAlpha = processed.convert(numChannels: 3);
+  }
+
+  final bytes = Uint8List.fromList(img.encodeJpg(noAlpha, quality: 85));
 
   return {
     'bytes': bytes,
-    'width': processed.width,
-    'height': processed.height,
+    'width': noAlpha.width,
+    'height': noAlpha.height,
   };
 }
 
-// 3. عملية القص النهائية وتطبيق الفلتر في الخلفية
 img.Image cropFinalIsolate(Map<String, dynamic> args) {
   final img.Image source = args['image'];
   var cropped = ManualCrop.cropPerspective(
@@ -59,7 +59,6 @@ img.Image cropFinalIsolate(Map<String, dynamic> args) {
   return ImageEnhancer.apply(cropped, args['mode'], args['intensity']);
 }
 
-/// دالة اكتشاف الحواف التلقائية
 List<double>? detectDocumentCornersIsolate(Uint8List imageBytes) {
   final corners = DocumentEdgeDetector.detect(imageBytes);
 
@@ -80,7 +79,6 @@ List<double>? detectDocumentCornersIsolate(Uint8List imageBytes) {
 }
 
 /// ===============================================================
-/// MOSUL SCANNER - PROFESSIONAL EDITION
 /// GOOGLE ML KIT DOCUMENT SCANNER
 /// ===============================================================
 
@@ -132,7 +130,6 @@ class ImageUtils {
   }) {
     img.Image toEncode = image;
 
-    // معالجة الشفافية التي تسبب الشاشة السوداء
     if (image.numChannels == 4) {
       try {
         toEncode = image.convert(numChannels: 3);
@@ -248,10 +245,6 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MosulScannerApp());
 }
-
-/// ===============================================================
-/// APP
-/// ===============================================================
 
 class MosulScannerApp extends StatelessWidget {
   const MosulScannerApp({super.key});
@@ -369,7 +362,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           try {
             final file = File(path);
             if (!await file.exists()) continue;
-            
+
             final bytes = await file.readAsBytes();
             final decoded = await compute(decodeImageIsolate, bytes);
 
@@ -397,7 +390,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   Future<void> _addManualImages(ImageSource source) async {
     try {
       setState(() => _isLoadingImages = true);
-      
+
       if (source == ImageSource.camera) {
         final photo = await _picker.pickImage(
           source: ImageSource.camera,
@@ -405,7 +398,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         );
         if (photo != null) {
           final bytes = await File(photo.path).readAsBytes();
-          // فك التشفير في الخلفية لمنع التجميد
           final decoded = await compute(decodeImageIsolate, bytes);
           if (decoded != null) {
             await _processImageWithCropScreen(
@@ -418,7 +410,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final files = await _picker.pickMultiImage(imageQuality: 95);
         for (final file in files) {
           final bytes = await File(file.path).readAsBytes();
-          // فك التشفير في الخلفية لمنع التجميد
           final decoded = await compute(decodeImageIsolate, bytes);
           if (decoded != null) {
             await _processImageWithCropScreen(
@@ -645,22 +636,14 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           IconButton(
             tooltip: 'ماسح Google الذكي',
             icon: _isScanning
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.document_scanner),
             onPressed: _isScanning ? null : _openGoogleScanner,
           ),
           IconButton(
             tooltip: 'استيراد من المعرض',
             icon: _isLoadingImages
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.photo_library_outlined),
             onPressed: _isLoadingImages ? null : () => _addManualImages(ImageSource.gallery),
           ),
@@ -675,18 +658,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               children: [
-                _buildToolBtn(
-                  'المستمسكات',
-                  Icons.badge_outlined,
-                  _activeTabMode == 'docs',
-                  () => setState(() => _activeTabMode = 'docs'),
-                ),
-                _buildToolBtn(
-                  'الصور الشخصية',
-                  Icons.person_outline,
-                  _activeTabMode == 'photos',
-                  () => setState(() => _activeTabMode = 'photos'),
-                ),
+                _buildToolBtn('المستمسكات', Icons.badge_outlined, _activeTabMode == 'docs', () => setState(() => _activeTabMode = 'docs')),
+                _buildToolBtn('الصور الشخصية', Icons.person_outline, _activeTabMode == 'photos', () => setState(() => _activeTabMode = 'photos')),
                 const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
                 _buildActionBtn('قص وتوضيح سحري', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
                 _buildActionBtn('تنسيق تلقائي', Icons.grid_view, _autoAlignItems, const Color(0xFF10B981)),
@@ -707,11 +680,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         width: double.infinity,
                         color: const Color(0xFF0F172A),
-                        child: const Text(
-                          'المقاسات القياسية',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
+                        child: const Text('المقاسات القياسية', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                       Expanded(
                         child: ListView(
@@ -765,9 +734,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             height: pageHeightMm * scale,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              boxShadow: [
-                                BoxShadow(color: Colors.black.withAlpha(153), blurRadius: 16, offset: const Offset(0, 4)),
-                              ],
+                              boxShadow: [BoxShadow(color: Colors.black.withAlpha(153), blurRadius: 16, offset: const Offset(0, 4))],
                             ),
                             child: Stack(
                               children: _items.map((item) {
@@ -790,10 +757,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                     child: Container(
                                       decoration: BoxDecoration(
                                         borderRadius: radius,
-                                        border: Border.all(
-                                          color: active ? const Color(0xFF0284C7) : Colors.transparent,
-                                          width: active ? 2 : 1,
-                                        ),
+                                        border: Border.all(color: active ? const Color(0xFF0284C7) : Colors.transparent, width: active ? 2 : 1),
                                       ),
                                       child: ClipRRect(
                                         borderRadius: radius,
@@ -944,7 +908,6 @@ class _CropScreenState extends State<CropScreen> {
   EnhanceMode _filter = EnhanceMode.none;
   double _filterIntensity = 0.8;
   
-  // حالات التحميل لعمليات الخلفية (Isolates)
   bool _isProcessing = true;
   bool _isSaving = false;
   
@@ -959,7 +922,6 @@ class _CropScreenState extends State<CropScreen> {
     _updateDisplayBytesAsync();
   }
 
-  // التحديث المعزول لمنع التجمد وإلغاء الشفافية المسببة للسواد
   Future<void> _updateDisplayBytesAsync() async {
     setState(() => _isProcessing = true);
 
@@ -1038,7 +1000,6 @@ class _CropScreenState extends State<CropScreen> {
       ..showSnackBar(SnackBar(content: Text(message, textDirection: TextDirection.rtl)));
   }
 
-  // القص النهائي بالخلفية لعدم تجميد واجهة المستخدم عند الضغط على "تم"
   Future<void> _applyCropAsync() async {
     setState(() => _isSaving = true);
     
@@ -1151,8 +1112,15 @@ class _CropScreenState extends State<CropScreen> {
                     final imgL = (cw - imgW) / 2;
                     final imgT = (ch - imgH) / 2;
 
-                    return Stack(
-                      children: _buildCropStackChildren(cw, ch, iw, ih, scale, imgW, imgH, imgL, imgT),
+                    // السحر الحقيقي لإصلاح مشكلة الاختفاء هو إعطاء SizedBox بحجم الشاشة للـ Stack
+                    // وتغيير ClipBehavior حتى لا يتم قص العناصر
+                    return SizedBox(
+                      width: cw,
+                      height: ch,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: _buildCropStackChildren(cw, ch, iw, ih, scale, imgW, imgH, imgL, imgT),
+                      ),
                     );
                   },
                 ),
@@ -1215,6 +1183,7 @@ class _CropScreenState extends State<CropScreen> {
         child: Image.memory(
           _displayBytes,
           fit: BoxFit.fill,
+          gaplessPlayback: true, // يمنع الوميض الأسود عند تبديل الفلاتر
           errorBuilder: (context, error, stackTrace) => Container(color: Colors.red.shade900, padding: const EdgeInsets.all(12), child: Text('فشل المعاينة: $error', style: const TextStyle(color: Colors.white))),
         ),
       ),
