@@ -6,27 +6,13 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 /// GOOGLE ML KIT DOCUMENT SCANNER
 /// ===============================================================
 ///
-/// هذا الملف مسؤول فقط عن:
-/// - تشغيل Google ML Kit Document Scanner
-/// - فتح الكاميرا
-/// - استيراد الصور من المعرض
-/// - إرجاع مسارات الصور الناتجة
-///
-/// لا يحتوي على أي كود للقص أو معالجة الصور أو واجهة التطبيق.
+/// مسؤول فقط عن Google ML Kit Document Scanner.
+/// لا يحتوي على معالجة الصور أو القص أو واجهة التطبيق.
 /// ===============================================================
 
 class GoogleScanner {
   GoogleScanner._();
 
-  /// تشغيل Google ML Kit Document Scanner
-  ///
-  /// fromGallery:
-  /// true  -> يسمح باستيراد الصور من المعرض
-  /// false -> الاستخدام الأساسي للكاميرا
-  ///
-  /// النتيجة:
-  /// List<String> تحتوي على مسارات الصور الناتجة.
-  /// إذا فشل المسح أو ألغاه المستخدم ترجع null.
   static Future<List<String>?> scan({
     bool fromGallery = false,
   }) async {
@@ -35,19 +21,11 @@ class GoogleScanner {
         DocumentFormat.jpeg,
         DocumentFormat.pdf,
       },
-
-      // الوضع الكامل يعطي واجهة Google الكاملة
-      // لاكتشاف المستند وتصحيحه تلقائياً.
       mode: ScannerMode.full,
-
-      // الحد الأقصى لعدد الصفحات في عملية واحدة.
       pageLimit: 5,
 
-      // السماح بالاستيراد من المعرض.
-      //
-      // Google ML Kit لا يملك خياراً منفصلاً لتحديد
-      // "كاميرا فقط" عبر fromGallery هنا؛
-      // لذلك نستخدم نفس الماسح مع تفعيل الاستيراد.
+      // Google ML Kit يحتاج هذا مفعلاً حتى يستطيع
+      // المستخدم استيراد صورة من المعرض.
       isGalleryImport: true,
     );
 
@@ -61,9 +39,10 @@ class GoogleScanner {
 
       final result = await scanner.scanDocument();
 
+      // في إصدار الحزمة لديك images يمكن أن تكون null.
       final images = result.images;
 
-      if (images.isEmpty) {
+      if (images == null || images.isEmpty) {
         debugPrint('Google Scanner: no images returned');
         return null;
       }
