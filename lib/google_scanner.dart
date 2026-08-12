@@ -31,7 +31,7 @@ class GoogleScanResult {
 class GoogleScanner {
   GoogleScanner._();
 
-  static const Duration startupTimeout = Duration(seconds: 30);
+  static const Duration startupTimeout = Duration(seconds: 35);
 
   static Future<GoogleScanResult> scan({
     bool fromGallery = false,
@@ -40,31 +40,40 @@ class GoogleScanner {
     DocumentScanner? scanner;
 
     try {
+      /*
+       * مهم:
+       * تطبيقنا لا يحتاج PDF من Google Scanner لأن main.dart
+       * ينشئ PDF بنفسه عند الطباعة.
+       *
+       * لذلك نطلب JPEG فقط + BASE.
+       * هذا يقلل المتطلبات على Google Play services
+       * ويبتعد عن ميزات FULL التي لا نحتاجها.
+       */
       final options = DocumentScannerOptions(
-        documentFormats: {
+        documentFormats: const {
           DocumentFormat.jpeg,
-          DocumentFormat.pdf,
         },
-        mode: ScannerMode.full,
+        mode: ScannerMode.base,
         pageLimit: 5,
         isGalleryImport: fromGallery,
       );
 
-      scanner = DocumentScanner(options: options);
-
       debugPrint(
-        '[GoogleScanner] Starting scanner. gallery=$fromGallery',
+        '[GoogleScanner] Creating scanner '
+        '(gallery=$fromGallery, mode=base, jpeg-only)',
       );
+
+      scanner = DocumentScanner(options: options);
 
       final result = await scanner.scanDocument().timeout(
         timeout,
-        onTimeout: () => throw TimeoutException(
-          'Google Document Scanner did not start within '
-          '${timeout.inSeconds} seconds.',
-        ),
+        onTimeout: () {
+          throw TimeoutException(
+            'Google Document Scanner startup timeout',
+          );
+        },
       );
 
-      // images قد تكون nullable في إصدار الـ plugin.
       final List<String> images =
           List<String>.from(result.images ?? const <String>[]);
 
@@ -76,7 +85,7 @@ class GoogleScanner {
       }
 
       debugPrint(
-        '[GoogleScanner] Success: ${images.length} image(s)',
+        '[GoogleScanner] Scan success: ${images.length} image(s)',
       );
 
       return GoogleScanResult(
@@ -90,19 +99,19 @@ class GoogleScanner {
       return GoogleScanResult(
         status: GoogleScanStatus.timeout,
         message:
-            'تعذر تشغيل ماسح Google خلال ${timeout.inSeconds} ثانية. '
+            'Google Scanner لم يبدأ خلال ${timeout.inSeconds} ثانية. '
             'تأكد من تحديث Google Play services واتصال الإنترنت عند أول تشغيل.',
         error: e,
       );
     } catch (e, stackTrace) {
-      debugPrint('[GoogleScanner] ERROR: $e');
+      debugPrint('[GoogleScanner] NATIVE ERROR: $e');
       debugPrintStack(stackTrace: stackTrace);
 
-      final lower = e.toString().toLowerCase();
+      final text = e.toString().toLowerCase();
 
-      if (lower.contains('cancel') ||
-          lower.contains('canceled') ||
-          lower.contains('cancelled')) {
+      if (text.contains('cancel') ||
+          text.contains('canceled') ||
+          text.contains('cancelled')) {
         return GoogleScanResult(
           status: GoogleScanStatus.cancelled,
           message: 'تم إلغاء عملية المسح.',
@@ -110,33 +119,42 @@ class GoogleScanner {
         );
       }
 
-      if (lower.contains('unsupported') ||
-          lower.contains('module') ||
-          lower.contains('play services') ||
-          lower.contains('google play') ||
-          lower.contains('service unavailable') ||
-          lower.contains('not available')) {
+      /*
+       * بعض إصدارات Google Play services ترجع PlatformException
+       * بدلاً من MlKitException عند فشل الـ dynamic module.
+       */
+      final looksLikeGoogleAvailabilityProblem =
+          text.contains('nullpointerexception') ||
+          text.contains('module') ||
+          text.contains('play services') ||
+          text.contains('google play') ||
+          text.contains('service unavailable') ||
+          text.contains('not available') ||
+          text.contains('unsupported') ||
+          text.contains('dynamic');
+
+      if (looksLikeGoogleAvailabilityProblem) {
         return GoogleScanResult(
           status: GoogleScanStatus.unavailable,
           message:
-              'ماسح Google غير متاح حالياً. '
-              'تأكد من وجود Google Play services وتحديثه، ثم أعد المحاولة.',
+              'Google Document Scanner غير متاح على الجهاز حالياً.\n\n'
+              'حدّث Google Play services من متجر Google Play، '
+              'وتأكد من وجود اتصال بالإنترنت، ثم أعد تشغيل التطبيق.',
           error: e,
         );
       }
 
       return GoogleScanResult(
         status: GoogleScanStatus.error,
-        message: 'حدث خطأ أثناء تشغيل ماسح Google: $e',
+        message: 'خطأ Google Scanner: $e',
         error: e,
       );
     } finally {
       if (scanner != null) {
         try {
           await scanner.close();
-          debugPrint('[GoogleScanner] Scanner closed.');
         } catch (e) {
-          debugPrint('[GoogleScanner] Close error: $e');
+          debugPrint('[GoogleScanner] close() error: $e');
         }
       }
     }
