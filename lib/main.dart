@@ -2327,46 +2327,6 @@ class _CropScreenState
                   );
                 }
 
-                final p1 =
-                    Offset(
-                  imgL +
-                      _x1 *
-                          imgW,
-                  imgT +
-                      _y1 *
-                          imgH,
-                );
-
-                final p2 =
-                    Offset(
-                  imgL +
-                      _x2 *
-                          imgW,
-                  imgT +
-                      _y2 *
-                          imgH,
-                );
-
-                final p3 =
-                    Offset(
-                  imgL +
-                      _x3 *
-                          imgW,
-                  imgT +
-                      _y3 *
-                          imgH,
-                );
-
-                final p4 =
-                    Offset(
-                  imgL +
-                      _x4 *
-                          imgW,
-                  imgT +
-                      _y4 *
-                          imgH,
-                );
-
                 return Stack(
                   children: [
                     // نص تشخيصي بموقع ثابت 100% (0,0) مالوش أي
@@ -2392,209 +2352,17 @@ class _CropScreenState
                       ),
                     ),
 
-                    Positioned(
-                      left: imgL,
-                      top: imgT,
-                      width: imgW,
-                      height: imgH,
-                      child:
-                          Image.memory(
-                        _displayBytes,
-                        fit:
-                            BoxFit.fill,
-                        errorBuilder:
-                            (context, error, stackTrace) {
-                          // أداة تشخيص مؤقتة: تعرض سبب فشل عرض
-                          // الصورة فعلياً بدل شاشة سوداء صامتة.
-                          return Container(
-                            color: Colors.red.shade900,
-                            padding: const EdgeInsets.all(12),
-                            child: SingleChildScrollView(
-                              child: Text(
-                                'فشل عرض الصورة:\n$error\n\n'
-                                'حجم البيانات: '
-                                '${_displayBytes.length} bytes\n'
-                                'أبعاد الصورة: ${widget.image.width}'
-                                'x${widget.image.height}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                ),
-                                textDirection:
-                                    TextDirection.ltr,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    Positioned.fill(
-                      child:
-                          CustomPaint(
-                        painter:
-                            CropBoxPainter(
-                          p1,
-                          p2,
-                          p3,
-                          p4,
-                        ),
-                      ),
-                    ),
-
-                    _buildCornerDot(
-                      _x1,
-                      _y1,
-                      imgL,
-                      imgT,
+                    ..._buildCropStackChildren(
+                      cw,
+                      ch,
+                      iw,
+                      ih,
+                      scale,
                       imgW,
                       imgH,
-                      (
-                        nx,
-                        ny,
-                      ) {
-                        setState(() {
-                          _x1 = nx;
-                          _y1 = ny;
-                        });
-                      },
-                    ),
-
-                    _buildCornerDot(
-                      _x2,
-                      _y2,
                       imgL,
                       imgT,
-                      imgW,
-                      imgH,
-                      (
-                        nx,
-                        ny,
-                      ) {
-                        setState(() {
-                          _x2 = nx;
-                          _y2 = ny;
-                        });
-                      },
                     ),
-
-                    _buildCornerDot(
-                      _x3,
-                      _y3,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (
-                        nx,
-                        ny,
-                      ) {
-                        setState(() {
-                          _x3 = nx;
-                          _y3 = ny;
-                        });
-                      },
-                    ),
-
-                    _buildCornerDot(
-                      _x4,
-                      _y4,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (
-                        nx,
-                        ny,
-                      ) {
-                        setState(() {
-                          _x4 = nx;
-                          _y4 = ny;
-                        });
-                      },
-                    ),
-
-                    // نقاط منتصف الأضلاع الأربعة - سحبها يحرّك
-                    // الضلع بالكامل (كلا الزاويتين معاً)، تماماً
-                    // كخاصية "مساواة" في تطبيقات المسح المعروفة.
-                    _buildEdgeMidHandle(
-                      _x1,
-                      _y1,
-                      _x2,
-                      _y2,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (dnx, dny) {
-                        setState(() {
-                          _x1 = (_x1 + dnx).clamp(0.0, 1.0);
-                          _y1 = (_y1 + dny).clamp(0.0, 1.0);
-                          _x2 = (_x2 + dnx).clamp(0.0, 1.0);
-                          _y2 = (_y2 + dny).clamp(0.0, 1.0);
-                        });
-                      },
-                    ),
-
-                    _buildEdgeMidHandle(
-                      _x2,
-                      _y2,
-                      _x3,
-                      _y3,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (dnx, dny) {
-                        setState(() {
-                          _x2 = (_x2 + dnx).clamp(0.0, 1.0);
-                          _y2 = (_y2 + dny).clamp(0.0, 1.0);
-                          _x3 = (_x3 + dnx).clamp(0.0, 1.0);
-                          _y3 = (_y3 + dny).clamp(0.0, 1.0);
-                        });
-                      },
-                    ),
-
-                    _buildEdgeMidHandle(
-                      _x3,
-                      _y3,
-                      _x4,
-                      _y4,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (dnx, dny) {
-                        setState(() {
-                          _x3 = (_x3 + dnx).clamp(0.0, 1.0);
-                          _y3 = (_y3 + dny).clamp(0.0, 1.0);
-                          _x4 = (_x4 + dnx).clamp(0.0, 1.0);
-                          _y4 = (_y4 + dny).clamp(0.0, 1.0);
-                        });
-                      },
-                    ),
-
-                    _buildEdgeMidHandle(
-                      _x4,
-                      _y4,
-                      _x1,
-                      _y1,
-                      imgL,
-                      imgT,
-                      imgW,
-                      imgH,
-                      (dnx, dny) {
-                        setState(() {
-                          _x4 = (_x4 + dnx).clamp(0.0, 1.0);
-                          _y4 = (_y4 + dny).clamp(0.0, 1.0);
-                          _x1 = (_x1 + dnx).clamp(0.0, 1.0);
-                          _y1 = (_y1 + dny).clamp(0.0, 1.0);
-                        });
-                      },
-                    ),
-
-                    // العدسة المكبرة - تظهر فقط أثناء سحب أي مقبض.
-                    _buildMagnifier(cw, ch, imgL, imgT, imgW, imgH),
                   ],
                 );
               },
@@ -2696,6 +2464,247 @@ class _CropScreenState
         ],
       ),
     );
+  }
+
+  /// يبني كل عناصر شاشة القص (الصورة، خطوط القص، نقاط الزوايا،
+  /// نقاط منتصف الأضلاع، العدسة المكبرة) داخل try/catch واحد.
+  ///
+  /// السبب: بوضع Release لا يظهر "الشاشة الحمراء" التلقائية لفلاتر
+  /// عند حدوث استثناء أثناء البناء (تظهر بوضع Debug فقط) - بدلاً
+  /// من ذلك يفشل العنصر بصمت (يطلع فاضي/رمادي غامق يشبه الأسود).
+  /// وبما أن عناصر القائمة تُبنى بشكل متسلسل، استثناء بأي عنصر
+  /// واحد يمنع القائمة كلها من الاكتمال. هذا الغلاف يكشف أي خطأ
+  /// كهذا فوراً كنص أحمر واضح بدل شاشة سوداء صامتة.
+  List<Widget> _buildCropStackChildren(
+    double cw,
+    double ch,
+    double iw,
+    double ih,
+    double scale,
+    double imgW,
+    double imgH,
+    double imgL,
+    double imgT,
+  ) {
+    try {
+      final p1 = Offset(
+        imgL + _x1 * imgW,
+        imgT + _y1 * imgH,
+      );
+
+      final p2 = Offset(
+        imgL + _x2 * imgW,
+        imgT + _y2 * imgH,
+      );
+
+      final p3 = Offset(
+        imgL + _x3 * imgW,
+        imgT + _y3 * imgH,
+      );
+
+      final p4 = Offset(
+        imgL + _x4 * imgW,
+        imgT + _y4 * imgH,
+      );
+
+      return [
+        Positioned(
+          left: imgL,
+          top: imgT,
+          width: imgW,
+          height: imgH,
+          child: Image.memory(
+            _displayBytes,
+            fit: BoxFit.fill,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                color: Colors.red.shade900,
+                padding: const EdgeInsets.all(12),
+                child: SingleChildScrollView(
+                  child: Text(
+                    'فشل عرض الصورة:\n$error\n\n'
+                    'حجم البيانات: ${_displayBytes.length} bytes\n'
+                    'أبعاد الصورة: ${widget.image.width}'
+                    'x${widget.image.height}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                    ),
+                    textDirection: TextDirection.ltr,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+        Positioned.fill(
+          child: CustomPaint(
+            painter: CropBoxPainter(p1, p2, p3, p4),
+          ),
+        ),
+
+        _buildCornerDot(
+          _x1,
+          _y1,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (nx, ny) {
+            setState(() {
+              _x1 = nx;
+              _y1 = ny;
+            });
+          },
+        ),
+
+        _buildCornerDot(
+          _x2,
+          _y2,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (nx, ny) {
+            setState(() {
+              _x2 = nx;
+              _y2 = ny;
+            });
+          },
+        ),
+
+        _buildCornerDot(
+          _x3,
+          _y3,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (nx, ny) {
+            setState(() {
+              _x3 = nx;
+              _y3 = ny;
+            });
+          },
+        ),
+
+        _buildCornerDot(
+          _x4,
+          _y4,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (nx, ny) {
+            setState(() {
+              _x4 = nx;
+              _y4 = ny;
+            });
+          },
+        ),
+
+        _buildEdgeMidHandle(
+          _x1,
+          _y1,
+          _x2,
+          _y2,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (dnx, dny) {
+            setState(() {
+              _x1 = (_x1 + dnx).clamp(0.0, 1.0);
+              _y1 = (_y1 + dny).clamp(0.0, 1.0);
+              _x2 = (_x2 + dnx).clamp(0.0, 1.0);
+              _y2 = (_y2 + dny).clamp(0.0, 1.0);
+            });
+          },
+        ),
+
+        _buildEdgeMidHandle(
+          _x2,
+          _y2,
+          _x3,
+          _y3,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (dnx, dny) {
+            setState(() {
+              _x2 = (_x2 + dnx).clamp(0.0, 1.0);
+              _y2 = (_y2 + dny).clamp(0.0, 1.0);
+              _x3 = (_x3 + dnx).clamp(0.0, 1.0);
+              _y3 = (_y3 + dny).clamp(0.0, 1.0);
+            });
+          },
+        ),
+
+        _buildEdgeMidHandle(
+          _x3,
+          _y3,
+          _x4,
+          _y4,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (dnx, dny) {
+            setState(() {
+              _x3 = (_x3 + dnx).clamp(0.0, 1.0);
+              _y3 = (_y3 + dny).clamp(0.0, 1.0);
+              _x4 = (_x4 + dnx).clamp(0.0, 1.0);
+              _y4 = (_y4 + dny).clamp(0.0, 1.0);
+            });
+          },
+        ),
+
+        _buildEdgeMidHandle(
+          _x4,
+          _y4,
+          _x1,
+          _y1,
+          imgL,
+          imgT,
+          imgW,
+          imgH,
+          (dnx, dny) {
+            setState(() {
+              _x4 = (_x4 + dnx).clamp(0.0, 1.0);
+              _y4 = (_y4 + dny).clamp(0.0, 1.0);
+              _x1 = (_x1 + dnx).clamp(0.0, 1.0);
+              _y1 = (_y1 + dny).clamp(0.0, 1.0);
+            });
+          },
+        ),
+
+        _buildMagnifier(cw, ch, imgL, imgT, imgW, imgH),
+      ];
+    } catch (e, stackTrace) {
+      debugPrint('CropScreen Stack build error: $e\n$stackTrace');
+
+      return [
+        Positioned.fill(
+          child: Container(
+            color: Colors.red.shade900,
+            padding: const EdgeInsets.all(12),
+            child: SingleChildScrollView(
+              child: Text(
+                'خطأ أثناء بناء شاشة القص:\n$e\n\n'
+                '--- Stack Trace ---\n$stackTrace',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                ),
+                textDirection: TextDirection.ltr,
+              ),
+            ),
+          ),
+        ),
+      ];
+    }
   }
 
   Widget _bottomToolButton({
