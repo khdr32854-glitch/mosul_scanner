@@ -13,13 +13,11 @@ dependencies:
   # واجهة الأيقونات الافتراضية من Flutter
   cupertino_icons: ^1.0.6
 
-  # اختيار الصور من الكاميرا/المعرض
-  image_picker: ^0.8.7
-
   # معالجة الصور (تدوير، قص، تحسين، ترميز JPEG)
   image: ^4.0.17
 
-  # ماسح المستندات الجاهز من Google ML Kit (أندرويد فقط)
+  # ماسح المستندات الجاهز من Google ML Kit (أندرويد فقط) - المصدر
+  # الوحيد لالتقاط/استيراد الصور بالنسخة الحالية من الكود.
   google_mlkit_document_scanner: ^0.4.0
 
   # بناء وتصدير ملفات PDF
@@ -27,9 +25,6 @@ dependencies:
 
   # الطباعة ومعاينة PDF
   printing: ^5.11.1
-
-  # كشف حواف المستند تلقائياً (Canny + Contours) - يتطلب NDK/C++
-  opencv_dart: ^1.4.5
 
 dev_dependencies:
   flutter_test:
