@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf/pdf.dart';
@@ -14,7 +13,7 @@ import 'edge_detector.dart';
 import 'perspective_warp.dart';
 
 /// ===============================================================
-/// ISOLATES (TOP-LEVEL FUNCTIONS)
+/// ISOLATES (BACKGROUND TASKS)
 /// ===============================================================
 
 img.Image? decodeImageIsolate(Uint8List bytes) {
@@ -28,7 +27,6 @@ Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
 
   final processed = ImageEnhancer.apply(source, mode, intensity);
 
-  // إزالة قناة الشفافية إن وجدت لمنع ظهور الشاشة السوداء في محرك Skia
   img.Image noAlpha = processed;
   if (processed.numChannels == 4) {
     noAlpha = processed.convert(numChannels: 3);
@@ -61,57 +59,18 @@ img.Image cropFinalIsolate(Map<String, dynamic> args) {
 
 List<double>? detectDocumentCornersIsolate(Uint8List imageBytes) {
   final corners = DocumentEdgeDetector.detect(imageBytes);
-
-  if (corners == null || corners.length != 4) {
-    return null;
-  }
+  if (corners == null || corners.length != 4) return null;
 
   return [
-    corners[0].dx,
-    corners[0].dy,
-    corners[1].dx,
-    corners[1].dy,
-    corners[2].dx,
-    corners[2].dy,
-    corners[3].dx,
-    corners[3].dy,
+    corners[0].dx, corners[0].dy,
+    corners[1].dx, corners[1].dy,
+    corners[2].dx, corners[2].dy,
+    corners[3].dx, corners[3].dy,
   ];
 }
 
 /// ===============================================================
-/// GOOGLE ML KIT DOCUMENT SCANNER
-/// ===============================================================
-
-class GoogleScanner {
-  static Future<List<String>?> scan() async {
-    final options = DocumentScannerOptions(
-      documentFormats: {
-        DocumentFormat.jpeg,
-        DocumentFormat.pdf,
-      },
-      mode: ScannerMode.full,
-      pageLimit: 2,
-      isGalleryImport: false,
-    );
-
-    final scanner = DocumentScanner(options: options);
-
-    try {
-      final result = await scanner.scanDocument();
-      return result.images;
-    } catch (e) {
-      debugPrint('Google Document Scanner Error: $e');
-      return null;
-    } finally {
-      try {
-        await scanner.close();
-      } catch (_) {}
-    }
-  }
-}
-
-/// ===============================================================
-/// IMAGE UTILS
+/// IMAGE UTILS & ENHANCEMENT
 /// ===============================================================
 
 class ImageUtils {
@@ -124,30 +83,18 @@ class ImageUtils {
     }
   }
 
-  static Uint8List encodeJpg(
-    img.Image image, {
-    int quality = 92,
-  }) {
+  static Uint8List encodeJpg(img.Image image, {int quality = 92}) {
     img.Image toEncode = image;
-
     if (image.numChannels == 4) {
       try {
         toEncode = image.convert(numChannels: 3);
       } catch (e) {
-        debugPrint('RGBA->RGB convert error: $e');
         toEncode = image;
       }
     }
-
     try {
-      return Uint8List.fromList(
-        img.encodeJpg(
-          toEncode,
-          quality: quality,
-        ),
-      );
+      return Uint8List.fromList(img.encodeJpg(toEncode, quality: quality));
     } catch (e) {
-      debugPrint('JPEG encode error: $e');
       return Uint8List(0);
     }
   }
@@ -157,11 +104,7 @@ class ImageUtils {
   }
 }
 
-/// ===============================================================
-/// ENHANCE
-/// ===============================================================
-
-enum EnhanceMode { none, magic, bw }
+enum EnhanceMode { none, magic, magicPro, noShadow, bw, grayscale }
 
 class ImageEnhancer {
   static img.Image apply(img.Image source, EnhanceMode mode, double intensity) {
@@ -175,9 +118,33 @@ class ImageEnhancer {
           final normalized = img.normalize(image, min: 0, max: 255);
           return img.adjustColor(
             normalized,
-            contrast: 1.1 + (0.3 * intensity),
-            brightness: 1.0 + (0.1 * intensity),
-            saturation: 1.0 + (0.2 * intensity),
+            contrast: 1.2 + (0.3 * intensity),
+            brightness: 1.05 + (0.1 * intensity),
+            saturation: 1.15 + (0.2 * intensity),
+          );
+        } catch (_) {
+          return image;
+        }
+      case EnhanceMode.magicPro:
+        try {
+          final normalized = img.normalize(image, min: 10, max: 245);
+          return img.adjustColor(
+            normalized,
+            contrast: 1.35 + (0.35 * intensity),
+            brightness: 1.1 + (0.1 * intensity),
+            saturation: 1.25,
+          );
+        } catch (_) {
+          return image;
+        }
+      case EnhanceMode.noShadow:
+        try {
+          final normalized = img.normalize(image, min: 15, max: 255);
+          return img.adjustColor(
+            normalized,
+            contrast: 1.1,
+            brightness: 1.18 + (0.1 * intensity),
+            saturation: 0.95,
           );
         } catch (_) {
           return image;
@@ -188,9 +155,15 @@ class ImageEnhancer {
           final normalized = img.normalize(gray, min: 0, max: 255);
           return img.adjustColor(
             normalized,
-            contrast: 1.2 + (0.4 * intensity),
-            brightness: 1.0 + (0.1 * intensity),
+            contrast: 1.3 + (0.4 * intensity),
+            brightness: 1.05 + (0.1 * intensity),
           );
+        } catch (_) {
+          return image;
+        }
+      case EnhanceMode.grayscale:
+        try {
+          return img.grayscale(image);
         } catch (_) {
           return image;
         }
@@ -198,25 +171,15 @@ class ImageEnhancer {
   }
 }
 
-/// ===============================================================
-/// MANUAL CROP
-/// ===============================================================
-
 class ManualCrop {
   static img.Image cropPerspective(
     img.Image source,
-    double x1,
-    double y1,
-    double x2,
-    double y2,
-    double x3,
-    double y3,
-    double x4,
-    double y4,
+    double x1, double y1,
+    double x2, double y2,
+    double x3, double y3,
+    double x4, double y4,
   ) {
-    if (!ImageUtils.isValid(source)) {
-      return img.Image.from(source);
-    }
+    if (!ImageUtils.isValid(source)) return img.Image.from(source);
 
     final w = source.width.toDouble();
     final h = source.height.toDouble();
@@ -231,14 +194,13 @@ class ManualCrop {
     try {
       return PerspectiveWarp.warp(source, corners);
     } catch (e) {
-      debugPrint('Perspective warp error: $e');
       return img.Image.from(source);
     }
   }
 }
 
 /// ===============================================================
-/// MAIN
+/// MAIN ENTRY POINT & APP THEME
 /// ===============================================================
 
 void main() {
@@ -256,7 +218,17 @@ class MosulScannerApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.blueGrey,
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC), // خلفية فاتحة أنيقة
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0284C7),
+          primary: const Color(0xFF0284C7),
+          surface: Colors.white,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          foregroundColor: Color(0xFF0F172A),
+          elevation: 0.5,
+        ),
       ),
       home: const MainScannerScreen(),
     );
@@ -326,7 +298,7 @@ class DocumentItem {
 }
 
 /// ===============================================================
-/// MAIN SCANNER SCREEN
+/// MAIN SCANNER SCREEN (LIGHT & CLEAN DESIGN)
 /// ===============================================================
 
 class MainScannerScreen extends StatefulWidget {
@@ -341,51 +313,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   DocumentItem? _activeItem;
   final ImagePicker _picker = ImagePicker();
   String _activeTabMode = 'docs';
-  bool _isScanning = false;
   bool _isLoadingImages = false;
 
   static const double pageWidthMm = 210.0;
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
-
-  Future<void> _openGoogleScanner() async {
-    if (_isScanning) return;
-    setState(() => _isScanning = true);
-
-    try {
-      final paths = await GoogleScanner.scan();
-      if (!mounted) return;
-
-      if (paths != null && paths.isNotEmpty) {
-        int added = 0;
-        for (final path in paths) {
-          try {
-            final file = File(path);
-            if (!await file.exists()) continue;
-
-            final bytes = await file.readAsBytes();
-            final decoded = await compute(decodeImageIsolate, bytes);
-
-            if (decoded != null) {
-              _addDecodedImage(decoded, isPhoto: false, curved: false);
-              added++;
-            }
-          } catch (e) {
-            debugPrint('Google image processing error: $e');
-          }
-        }
-        if (added > 0) {
-          _showMessage('تم المسح بواسطة Google Scanner بنجاح');
-        } else {
-          _showMessage('لم يتم العثور على صور صالحة', error: true);
-        }
-      }
-    } catch (e) {
-      if (mounted) _showMessage('تعذر تشغيل ماسح Google', error: true);
-    } finally {
-      if (mounted) setState(() => _isScanning = false);
-    }
-  }
 
   Future<void> _addManualImages(ImageSource source) async {
     try {
@@ -610,7 +542,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(message, textDirection: TextDirection.rtl),
-          backgroundColor: error ? Colors.red.shade800 : null,
+          backgroundColor: error ? Colors.red.shade700 : const Color(0xFF0284C7),
         ),
       );
   }
@@ -618,49 +550,52 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFFF1F5F9), // رمادي فاتح مريح
       appBar: AppBar(
         title: const Text(
           'مكتب علاء الحديدي - نظام الطباعة الاحترافي',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
         ),
-        backgroundColor: const Color(0xFF1E293B),
-        foregroundColor: Colors.white,
-        elevation: 0,
+        backgroundColor: Colors.white,
+        elevation: 1,
         actions: [
           IconButton(
             tooltip: 'طباعة المستندات',
-            icon: const Icon(Icons.print_outlined),
+            icon: const Icon(Icons.print_outlined, color: Color(0xFF0284C7)),
             onPressed: _exportAndPrint,
           ),
+          // خيار الكاميرا المباشر
           IconButton(
-            tooltip: 'ماسح Google الذكي',
-            icon: _isScanning
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.document_scanner),
-            onPressed: _isScanning ? null : _openGoogleScanner,
+            tooltip: 'التقاط بواسطة الكاميرا',
+            icon: const Icon(Icons.camera_alt_outlined, color: Color(0xFF0284C7)),
+            onPressed: () => _addManualImages(ImageSource.camera),
           ),
+          // خيار المعرض
           IconButton(
             tooltip: 'استيراد من المعرض',
             icon: _isLoadingImages
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.photo_library_outlined),
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0284C7)))
+                : const Icon(Icons.photo_library_outlined, color: Color(0xFF0284C7)),
             onPressed: _isLoadingImages ? null : () => _addManualImages(ImageSource.gallery),
           ),
         ],
       ),
       body: Column(
         children: [
+          // شريط الأدوات العلوي الفاتح
           Container(
-            height: 48,
-            color: const Color(0xFF111827),
+            height: 50,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+            ),
             child: ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               children: [
                 _buildToolBtn('المستمسكات', Icons.badge_outlined, _activeTabMode == 'docs', () => setState(() => _activeTabMode = 'docs')),
                 _buildToolBtn('الصور الشخصية', Icons.person_outline, _activeTabMode == 'photos', () => setState(() => _activeTabMode = 'photos')),
-                const VerticalDivider(color: Colors.white24, indent: 4, endIndent: 4),
+                const VerticalDivider(color: Color(0xFFCBD5E1), indent: 6, endIndent: 6),
                 _buildActionBtn('قص وتوضيح سحري', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
                 _buildActionBtn('تنسيق تلقائي', Icons.grid_view, _autoAlignItems, const Color(0xFF10B981)),
                 _buildActionBtn('تدوير', Icons.rotate_right, _rotateActiveItem, const Color(0xFF64748B)),
@@ -671,16 +606,24 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           Expanded(
             child: Row(
               children: [
+                // اللوحة الجانبية للمقاسات
                 Container(
-                  width: 110,
-                  color: const Color(0xFF1E293B),
+                  width: 115,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(left: BorderSide(color: Color(0xFFE2E8F0))),
+                  ),
                   child: Column(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
                         width: double.infinity,
-                        color: const Color(0xFF0F172A),
-                        child: const Text('المقاسات القياسية', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+                        color: const Color(0xFFF8FAFC),
+                        child: const Text(
+                          'المقاسات القياسية',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Color(0xFF475569), fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
                       ),
                       Expanded(
                         child: ListView(
@@ -704,14 +647,14 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             width: double.infinity,
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFDC2626),
-                                foregroundColor: Colors.white,
+                                backgroundColor: const Color(0xFFFEE2E2),
+                                foregroundColor: const Color(0xFFDC2626),
                                 elevation: 0,
                                 padding: const EdgeInsets.symmetric(vertical: 8),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                               ),
                               onPressed: _deleteActiveItem,
-                              icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                              icon: const Icon(Icons.delete_outline, size: 16),
                               label: const Text('حذف العنصر', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                             ),
                           ),
@@ -719,9 +662,10 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ],
                   ),
                 ),
+                // مساحة العمل ورقة A4
                 Expanded(
                   child: Container(
-                    color: const Color(0xFF090D16),
+                    color: const Color(0xFFE2E8F0),
                     child: Center(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
@@ -734,7 +678,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             height: pageHeightMm * scale,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              boxShadow: [BoxShadow(color: Colors.black.withAlpha(153), blurRadius: 16, offset: const Offset(0, 4))],
+                              boxShadow: [
+                                BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4)),
+                              ],
                             ),
                             child: Stack(
                               children: _items.map((item) {
@@ -757,7 +703,10 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                                     child: Container(
                                       decoration: BoxDecoration(
                                         borderRadius: radius,
-                                        border: Border.all(color: active ? const Color(0xFF0284C7) : Colors.transparent, width: active ? 2 : 1),
+                                        border: Border.all(
+                                          color: active ? const Color(0xFF0284C7) : Colors.transparent,
+                                          width: active ? 2 : 1,
+                                        ),
                                       ),
                                       child: ClipRRect(
                                         borderRadius: radius,
@@ -791,15 +740,15 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFF0284C7).withAlpha(51) : Colors.transparent,
+            color: selected ? const Color(0xFFE0F2FE) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: selected ? const Color(0xFF0284C7) : Colors.white24),
+            border: Border.all(color: selected ? const Color(0xFF0284C7) : const Color(0xFFCBD5E1)),
           ),
           child: Row(
             children: [
-              Icon(icon, size: 14, color: selected ? const Color(0xFF38BDF8) : Colors.white70),
+              Icon(icon, size: 14, color: selected ? const Color(0xFF0284C7) : const Color(0xFF64748B)),
               const SizedBox(width: 5),
-              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: selected ? const Color(0xFF38BDF8) : Colors.white70)),
+              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: selected ? const Color(0xFF0284C7) : const Color(0xFF64748B))),
             ],
           ),
         ),
@@ -816,9 +765,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: color.withAlpha(38),
+            color: color.withOpacity(0.1),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: color.withAlpha(102)),
+            border: Border.all(color: color.withOpacity(0.3)),
           ),
           child: Row(
             children: [
@@ -838,9 +787,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          backgroundColor: clr.withAlpha(30),
+          backgroundColor: clr.withOpacity(0.08),
           foregroundColor: clr,
-          side: BorderSide(color: clr.withAlpha(76)),
+          side: BorderSide(color: clr.withOpacity(0.2)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
           elevation: 0,
         ),
@@ -849,7 +798,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           children: [
             Text(title, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: clr)),
             const SizedBox(height: 2),
-            Text(subtitle, style: TextStyle(fontSize: 8, color: clr.withAlpha(204))),
+            Text(subtitle, style: TextStyle(fontSize: 8, color: clr.withOpacity(0.8))),
           ],
         ),
       ),
@@ -868,7 +817,7 @@ class CropBoxPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xFF0284C7).withAlpha(220)
+      ..color = const Color(0xFF0284C7)
       ..strokeWidth = 2.5
       ..style = PaintingStyle.stroke
       ..strokeJoin = StrokeJoin.round;
@@ -888,7 +837,7 @@ class CropBoxPainter extends CustomPainter {
 }
 
 /// ===============================================================
-/// CROP SCREEN
+/// CROP SCREEN (CAMSCANNER STYLE WITH BLUE THEME)
 /// ===============================================================
 
 class CropScreen extends StatefulWidget {
@@ -900,25 +849,27 @@ class CropScreen extends StatefulWidget {
 }
 
 class _CropScreenState extends State<CropScreen> {
+  late img.Image _workingImage;
+  
   double _x1 = 0.05, _y1 = 0.05;
   double _x2 = 0.95, _y2 = 0.05;
   double _x3 = 0.95, _y3 = 0.95;
   double _x4 = 0.05, _y4 = 0.95;
 
-  EnhanceMode _filter = EnhanceMode.none;
+  EnhanceMode _filter = EnhanceMode.magic;
   double _filterIntensity = 0.8;
   
   bool _isProcessing = true;
   bool _isSaving = false;
   
   late Uint8List _displayBytes;
-  String _debugInfo = 'جاري المعالجة الأولية...';
   Offset? _dragFocalPoint;
   bool _isDetecting = false;
 
   @override
   void initState() {
     super.initState();
+    _workingImage = widget.image;
     _updateDisplayBytesAsync();
   }
 
@@ -927,7 +878,7 @@ class _CropScreenState extends State<CropScreen> {
 
     try {
       final result = await compute(processPreviewIsolate, {
-        'image': widget.image,
+        'image': _workingImage,
         'mode': _filter,
         'intensity': _filterIntensity,
       });
@@ -936,20 +887,29 @@ class _CropScreenState extends State<CropScreen> {
 
       setState(() {
         _displayBytes = result['bytes'];
-        _debugInfo = 'Preview: ${result['width']}x${result['height']} | bytes=${_displayBytes.length}';
         _isProcessing = false;
       });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _debugInfo = 'Error: $e';
-          _isProcessing = false;
-        });
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  void _selectAll() {
+  // أداة تدوير الصورة لليصار أو اليمين
+  void _rotateImage(bool clockwise) {
+    final angle = clockwise ? 90 : 270;
+    setState(() {
+      _workingImage = img.copyRotate(_workingImage, angle: angle);
+      // إعادة تعيين النقاط لتناسب الأبعاد الجديدة
+      _x1 = 0.05; _y1 = 0.05;
+      _x2 = 0.95; _y2 = 0.05;
+      _x3 = 0.95; _y3 = 0.95;
+      _x4 = 0.05; _y4 = 0.95;
+    });
+    _updateDisplayBytesAsync();
+  }
+
+  // أداة مساواة (ضبط الحدود للطرفين)
+  void _resetPerspective() {
     setState(() {
       _x1 = 0.0; _y1 = 0.0;
       _x2 = 1.0; _y2 = 0.0;
@@ -963,14 +923,14 @@ class _CropScreenState extends State<CropScreen> {
     setState(() => _isDetecting = true);
 
     try {
-      final bytes = ImageUtils.encodeJpg(widget.image, quality: 90);
+      final bytes = ImageUtils.encodeJpg(_workingImage, quality: 90);
       final flatCorners = await compute(detectDocumentCornersIsolate, bytes);
 
       if (!mounted) return;
 
       if (flatCorners != null && flatCorners.length == 8) {
-        final w = widget.image.width.toDouble();
-        final h = widget.image.height.toDouble();
+        final w = _workingImage.width.toDouble();
+        final h = _workingImage.height.toDouble();
 
         setState(() {
           _x1 = (flatCorners[0] / w).clamp(0.0, 1.0);
@@ -983,21 +943,13 @@ class _CropScreenState extends State<CropScreen> {
           _y4 = (flatCorners[7] / h).clamp(0.0, 1.0);
         });
       } else {
-        _showSnack('تعذر اكتشاف حواف المستند تلقائياً، يمكنك تحديدها يدوياً');
+        _resetPerspective();
       }
     } catch (e) {
-      debugPrint('Auto detect error: $e');
-      _showSnack('تعذر تشغيل الكشف التلقائي');
+      _resetPerspective();
     } finally {
       if (mounted) setState(() => _isDetecting = false);
     }
-  }
-
-  void _showSnack(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message, textDirection: TextDirection.rtl)));
   }
 
   Future<void> _applyCropAsync() async {
@@ -1005,7 +957,7 @@ class _CropScreenState extends State<CropScreen> {
     
     try {
       final cropped = await compute(cropFinalIsolate, {
-        'image': widget.image,
+        'image': _workingImage,
         'x1': _x1, 'y1': _y1,
         'x2': _x2, 'y2': _y2,
         'x3': _x3, 'y3': _y3,
@@ -1016,10 +968,7 @@ class _CropScreenState extends State<CropScreen> {
 
       if (mounted) Navigator.pop(context, cropped);
     } catch (e) {
-      if (mounted) {
-        setState(() => _isSaving = false);
-        _showSnack('حدث خطأ أثناء حفظ التعديلات');
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -1029,82 +978,39 @@ class _CropScreenState extends State<CropScreen> {
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1E293B),
+        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
-        title: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _filterChip('أصلي', _filter == EnhanceMode.none, () {
-                setState(() => _filter = EnhanceMode.none);
-                _updateDisplayBytesAsync();
-              }),
-              const SizedBox(width: 4),
-              _filterChip('تحسين سحري ✨', _filter == EnhanceMode.magic, () {
-                setState(() => _filter = EnhanceMode.magic);
-                _updateDisplayBytesAsync();
-              }),
-              const SizedBox(width: 4),
-              _filterChip('أبيض وأسود رسمي', _filter == EnhanceMode.bw, () {
-                setState(() => _filter = EnhanceMode.bw);
-                _updateDisplayBytesAsync();
-              }),
-            ],
-          ),
+        title: const Text(
+          'تعديل وقص المستند',
+          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
-            tooltip: 'تحديد الكل',
-            icon: const Icon(Icons.auto_awesome_mosaic, color: Colors.amber),
-            onPressed: _selectAll,
-          ),
-          IconButton(
             tooltip: 'تم والتصدير',
             icon: _isSaving 
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.greenAccent, strokeWidth: 2))
-                : const Icon(Icons.check, color: Colors.greenAccent),
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Color(0xFF38BDF8), strokeWidth: 2))
+                : const Icon(Icons.check, color: Color(0xFF38BDF8), size: 28),
             onPressed: _isSaving ? null : _applyCropAsync,
           ),
         ],
       ),
-      body: _isProcessing 
-        ? const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(color: Color(0xFF38BDF8)),
-                SizedBox(height: 16),
-                Text('جاري معالجة الصورة...', style: TextStyle(color: Colors.white70)),
-              ],
-            ),
-          )
-        : Column(
-            children: [
-              Container(
-                width: double.infinity,
-                color: Colors.indigo.shade900,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Text(
-                  _debugInfo,
-                  style: const TextStyle(color: Colors.white, fontSize: 9),
-                  textDirection: TextDirection.ltr,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Expanded(
-                child: LayoutBuilder(
+      body: Column(
+        children: [
+          // مساحة العرض المركزية للصورة والقص
+          Expanded(
+            child: _isProcessing 
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF0284C7)))
+              : LayoutBuilder(
                   builder: (context, constraints) {
                     final cw = constraints.maxWidth;
                     final ch = constraints.maxHeight;
-                    final iw = widget.image.width.toDouble();
-                    final ih = widget.image.height.toDouble();
+                    final iw = _workingImage.width.toDouble();
+                    final ih = _workingImage.height.toDouble();
 
-                    if (iw <= 0 || ih <= 0 || cw <= 0 || ch <= 0 || !cw.isFinite || !ch.isFinite) {
-                      return const Center(child: Text('بيانات الصورة غير صالحة للعرض', style: TextStyle(color: Colors.red)));
-                    }
+                    if (iw <= 0 || ih <= 0 || cw <= 0 || ch <= 0) return const SizedBox();
 
                     final scale = math.min(cw / iw, ch / ih);
                     final imgW = iw * scale;
@@ -1112,8 +1018,6 @@ class _CropScreenState extends State<CropScreen> {
                     final imgL = (cw - imgW) / 2;
                     final imgT = (ch - imgH) / 2;
 
-                    // السحر الحقيقي لإصلاح مشكلة الاختفاء هو إعطاء SizedBox بحجم الشاشة للـ Stack
-                    // وتغيير ClipBehavior حتى لا يتم قص العناصر
                     return SizedBox(
                       width: cw,
                       height: ch,
@@ -1124,47 +1028,128 @@ class _CropScreenState extends State<CropScreen> {
                     );
                   },
                 ),
-              ),
-              if (_filter != EnhanceMode.none)
-                Container(
-                  color: const Color(0xFF1E293B),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.contrast, color: Colors.white70, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Slider(
-                          value: _filterIntensity,
-                          min: 0.0,
-                          max: 2.0,
-                          activeColor: const Color(0xFF38BDF8),
-                          inactiveColor: Colors.white24,
-                          onChangeEnd: (val) {
-                            _updateDisplayBytesAsync();
-                          },
-                          onChanged: (val) {
-                            setState(() => _filterIntensity = val);
-                          },
-                        ),
-                      ),
-                      Text('${(_filterIntensity * 50).toInt()}%', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              Container(
-                color: const Color(0xFF1E293B),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _bottomToolButton(label: 'الكل', icon: Icons.crop_free, onTap: _selectAll),
-                    _bottomToolButton(label: 'القص التلقائي', icon: Icons.auto_fix_high, onTap: _isDetecting ? null : _runAutoDetect, isLoading: _isDetecting),
-                  ],
-                ),
-              ),
-            ],
           ),
+
+          // شريط الأدوات الأوسط (التدوير، المساواة، والقص التلقائي)
+          Container(
+            color: const Color(0xFF1E293B),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _actionIconButton(Icons.rotate_left, 'اليسار', () => _rotateImage(false)),
+                _actionIconButton(Icons.crop_rotate, 'مساواة', _resetPerspective),
+                _actionIconButton(Icons.auto_fix_high, 'قص تلقائي', _runAutoDetect, isLoading: _isDetecting),
+                _actionIconButton(Icons.rotate_right, 'اليمين', () => _rotateImage(true)),
+              ],
+            ),
+          ),
+
+          // شريط الفلاتر على نمط CamScanner
+          Container(
+            height: 85,
+            color: const Color(0xFF0F172A),
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              children: [
+                _buildCamScannerFilter('أصلي', EnhanceMode.none),
+                _buildCamScannerFilter('أداة سحرية ✨', EnhanceMode.magic),
+                _buildCamScannerFilter('Magic Pro ⭐', EnhanceMode.magicPro),
+                _buildCamScannerFilter('بدون ظل', EnhanceMode.noShadow),
+                _buildCamScannerFilter('أبيض وأسود', EnhanceMode.bw),
+                _buildCamScannerFilter('رمادي', EnhanceMode.grayscale),
+              ],
+            ),
+          ),
+
+          // زر الصح الأزرق للتأكيد السريع
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF0F172A),
+            padding: const EdgeInsets.only(bottom: 12, left: 16, right: 16),
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0284C7),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: _isSaving ? null : _applyCropAsync,
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check, size: 20),
+                  SizedBox(width: 8),
+                  Text('حفظ واعتتماد التعديل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionIconButton(IconData icon, String label, VoidCallback onTap, {bool isLoading = false}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            isLoading 
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)))
+              : Icon(icon, color: Colors.white70, size: 20),
+            const SizedBox(height: 3),
+            Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCamScannerFilter(String title, EnhanceMode mode) {
+    final selected = _filter == mode;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _filter = mode);
+        _updateDisplayBytesAsync();
+      },
+      child: Container(
+        width: 75,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF0284C7).withOpacity(0.2) : const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? const Color(0xFF0284C7) : Colors.white12,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              selected ? Icons.auto_awesome : Icons.image_outlined,
+              color: selected ? const Color(0xFF38BDF8) : Colors.white54,
+              size: 20,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.white70,
+                fontSize: 9,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1183,8 +1168,7 @@ class _CropScreenState extends State<CropScreen> {
         child: Image.memory(
           _displayBytes,
           fit: BoxFit.fill,
-          gaplessPlayback: true, // يمنع الوميض الأسود عند تبديل الفلاتر
-          errorBuilder: (context, error, stackTrace) => Container(color: Colors.red.shade900, padding: const EdgeInsets.all(12), child: Text('فشل المعاينة: $error', style: const TextStyle(color: Colors.white))),
+          gaplessPlayback: true,
         ),
       ),
       Positioned.fill(child: CustomPaint(painter: CropBoxPainter(p1, p2, p3, p4))),
@@ -1198,24 +1182,6 @@ class _CropScreenState extends State<CropScreen> {
       _buildEdgeMidHandle(_x4, _y4, _x1, _y1, imgL, imgT, imgW, imgH, (dnx, dny) => setState(() { _x4 = (_x4 + dnx).clamp(0.0, 1.0); _y4 = (_y4 + dny).clamp(0.0, 1.0); _x1 = (_x1 + dnx).clamp(0.0, 1.0); _y1 = (_y1 + dny).clamp(0.0, 1.0); })),
       _buildMagnifier(cw, ch, imgL, imgT, imgW, imgH),
     ];
-  }
-
-  Widget _bottomToolButton({required String label, required IconData icon, required VoidCallback? onTap, bool isLoading = false}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            isLoading ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8))) : Icon(icon, color: const Color(0xFF38BDF8), size: 22),
-            const SizedBox(height: 4),
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildEdgeMidHandle(double ax, double ay, double bx, double by, double il, double it, double iw, double ih, void Function(double dnx, double dny) onDelta) {
@@ -1235,11 +1201,11 @@ class _CropScreenState extends State<CropScreen> {
         child: Container(
           width: 28, height: 28, alignment: Alignment.center,
           child: Container(
-            width: isHorizontal ? 26 : 10, height: isHorizontal ? 10 : 26,
+            width: isHorizontal ? 24 : 10, height: isHorizontal ? 10 : 24,
             decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(5),
+              color: Colors.white, borderRadius: BorderRadius.circular(4),
               border: Border.all(color: const Color(0xFF0284C7), width: 1.5),
-              boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 3)],
+              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 3)],
             ),
           ),
         ),
@@ -1292,20 +1258,9 @@ class _CropScreenState extends State<CropScreen> {
         onPanEnd: (_) => setState(() => _dragFocalPoint = null),
         child: Container(
           width: 36, height: 36,
-          decoration: BoxDecoration(color: const Color(0xFF0284C7).withAlpha(230), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2), boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)]),
+          decoration: BoxDecoration(color: const Color(0xFF0284C7), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2), boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)]),
           child: const Icon(Icons.control_camera, size: 16, color: Colors.white),
         ),
-      ),
-    );
-  }
-
-  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(color: selected ? const Color(0xFF0284C7) : Colors.white12, borderRadius: BorderRadius.circular(6)),
-        child: Text(label, style: TextStyle(color: selected ? Colors.white : Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
       ),
     );
   }
