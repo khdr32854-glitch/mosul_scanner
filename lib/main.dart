@@ -8,7 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-// الاستيرادات المحلية
+// الاستيرادات المحلية (تأكد من وجود هذه الملفات في نفس مجلد lib)
 import 'google_scanner_service.dart';
 import 'perspective_warp.dart';
 
@@ -312,7 +312,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     setState(() => _isScanning = true);
 
     try {
-      // استدعاء الخدمة من الملف المنعزل
       final paths = await GoogleScannerService.scanDocument(fromGallery: fromGallery);
       if (!mounted) return;
 
@@ -337,13 +336,13 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           }
         }
         if (added > 0) {
-          _showMessage('تم المسح بالذكاء الاصطناعي المحلي بنجاح');
+          _showMessage('تم الاستيراد بنجاح');
         } else {
           _showMessage('لم يتم العثور على صور صالحة', error: true);
         }
       }
     } catch (e) {
-      if (mounted) _showMessage('تعذر تشغيل ماسح جوجل الذكي', error: true);
+      if (mounted) _showMessage('تعذر تشغيل ماسح المستندات', error: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -543,14 +542,14 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             onPressed: _exportAndPrint,
           ),
           IconButton(
-            tooltip: 'التقاط بواسطة جوجل الذكي',
+            tooltip: 'التقاط بواسطة الكاميرا الذكية',
             icon: _isScanning && !_isLoadingImages 
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0284C7)))
                 : const Icon(Icons.camera_alt_outlined, color: Color(0xFF0284C7)),
             onPressed: _isScanning || _isLoadingImages ? null : () => _openGoogleScanner(fromGallery: false),
           ),
           IconButton(
-            tooltip: 'استيراد من المعرض (جوجل الذكي)',
+            tooltip: 'استيراد من المعرض (القص الذكي)',
             icon: _isLoadingImages 
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0284C7)))
                 : const Icon(Icons.photo_library_outlined, color: Color(0xFF0284C7)),
@@ -575,7 +574,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     _buildToolBtn('المستمسكات', Icons.badge_outlined, _activeTabMode == 'docs', () => setState(() => _activeTabMode = 'docs')),
                     _buildToolBtn('الصور الشخصية', Icons.person_outline, _activeTabMode == 'photos', () => setState(() => _activeTabMode = 'photos')),
                     const VerticalDivider(color: Color(0xFFCBD5E1), indent: 6, endIndent: 6),
-                    _buildActionBtn('قص وتوضيح سحري', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
+                    _buildActionBtn('تعديل وقص يدوي', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
                     _buildActionBtn('تنسيق تلقائي', Icons.grid_view, _autoAlignItems, const Color(0xFF10B981)),
                     _buildActionBtn('تدوير', Icons.rotate_right, _rotateActiveItem, const Color(0xFF64748B)),
                     _buildActionBtn('نسخ', Icons.copy_all, _duplicateActiveItem, const Color(0xFF8B5CF6)),
@@ -841,7 +840,8 @@ class _CropScreenState extends State<CropScreen> {
   double _x4 = 0.05, _y4 = 0.95;
 
   EnhanceMode _filter = EnhanceMode.magic;
-  double _filterIntensity = 0.8;
+  // تم تحويل هذا المتغير إلى final لحل التحذير
+  final double _filterIntensity = 0.8; 
   
   bool _isProcessing = true;
   bool _isSaving = false;
