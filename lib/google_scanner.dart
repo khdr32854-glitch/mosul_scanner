@@ -1,66 +1,143 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 
-/// ===============================================================
-/// MOSUL SCANNER
-/// GOOGLE ML KIT DOCUMENT SCANNER
-/// ===============================================================
-///
-/// مسؤول فقط عن Google ML Kit Document Scanner.
-/// لا يحتوي على معالجة الصور أو القص أو واجهة التطبيق.
-/// ===============================================================
+enum GoogleScanStatus {
+  success,
+  cancelled,
+  timeout,
+  unavailable,
+  error,
+}
+
+class GoogleScanResult {
+  final GoogleScanStatus status;
+  final List<String> images;
+  final String? message;
+  final Object? error;
+
+  const GoogleScanResult({
+    required this.status,
+    this.images = const <String>[],
+    this.message,
+    this.error,
+  });
+
+  bool get isSuccess =>
+      status == GoogleScanStatus.success && images.isNotEmpty;
+}
 
 class GoogleScanner {
   GoogleScanner._();
 
-  static Future<List<String>?> scan({
+  static const Duration startupTimeout = Duration(seconds: 30);
+
+  static Future<GoogleScanResult> scan({
     bool fromGallery = false,
+    Duration timeout = startupTimeout,
   }) async {
-    final options = DocumentScannerOptions(
-      documentFormats: {
-        DocumentFormat.jpeg,
-        DocumentFormat.pdf,
-      },
-      mode: ScannerMode.full,
-      pageLimit: 5,
-
-      // Google ML Kit يحتاج هذا مفعلاً حتى يستطيع
-      // المستخدم استيراد صورة من المعرض.
-      isGalleryImport: true,
-    );
-
-    final scanner = DocumentScanner(options: options);
+    DocumentScanner? scanner;
 
     try {
-      debugPrint(
-        'Google Scanner: starting '
-        '(fromGallery: $fromGallery)',
+      final options = DocumentScannerOptions(
+        documentFormats: {
+          DocumentFormat.jpeg,
+          DocumentFormat.pdf,
+        },
+        mode: ScannerMode.full,
+        pageLimit: 5,
+        isGalleryImport: fromGallery,
       );
 
-      final result = await scanner.scanDocument();
+      scanner = DocumentScanner(options: options);
 
-      // في إصدار الحزمة لديك images يمكن أن تكون null.
-      final images = result.images;
+      debugPrint(
+        '[GoogleScanner] Starting scanner. gallery=$fromGallery',
+      );
 
-      if (images == null || images.isEmpty) {
-        debugPrint('Google Scanner: no images returned');
-        return null;
+      final result = await scanner.scanDocument().timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException(
+          'Google Document Scanner did not start within '
+          '${timeout.inSeconds} seconds.',
+        ),
+      );
+
+      // images قد تكون nullable في إصدار الـ plugin.
+      final List<String> images =
+          List<String>.from(result.images ?? const <String>[]);
+
+      if (images.isEmpty) {
+        return const GoogleScanResult(
+          status: GoogleScanStatus.cancelled,
+          message: 'لم يتم اختيار أو مسح أي مستند.',
+        );
       }
 
       debugPrint(
-        'Google Scanner: ${images.length} image(s) returned',
+        '[GoogleScanner] Success: ${images.length} image(s)',
       );
 
-      return images;
+      return GoogleScanResult(
+        status: GoogleScanStatus.success,
+        images: images,
+        message: 'تم المسح بنجاح.',
+      );
+    } on TimeoutException catch (e) {
+      debugPrint('[GoogleScanner] TIMEOUT: $e');
+
+      return GoogleScanResult(
+        status: GoogleScanStatus.timeout,
+        message:
+            'تعذر تشغيل ماسح Google خلال ${timeout.inSeconds} ثانية. '
+            'تأكد من تحديث Google Play services واتصال الإنترنت عند أول تشغيل.',
+        error: e,
+      );
     } catch (e, stackTrace) {
-      debugPrint('Google Document Scanner Error: $e');
-      debugPrint('$stackTrace');
-      return null;
+      debugPrint('[GoogleScanner] ERROR: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      final lower = e.toString().toLowerCase();
+
+      if (lower.contains('cancel') ||
+          lower.contains('canceled') ||
+          lower.contains('cancelled')) {
+        return GoogleScanResult(
+          status: GoogleScanStatus.cancelled,
+          message: 'تم إلغاء عملية المسح.',
+          error: e,
+        );
+      }
+
+      if (lower.contains('unsupported') ||
+          lower.contains('module') ||
+          lower.contains('play services') ||
+          lower.contains('google play') ||
+          lower.contains('service unavailable') ||
+          lower.contains('not available')) {
+        return GoogleScanResult(
+          status: GoogleScanStatus.unavailable,
+          message:
+              'ماسح Google غير متاح حالياً. '
+              'تأكد من وجود Google Play services وتحديثه، ثم أعد المحاولة.',
+          error: e,
+        );
+      }
+
+      return GoogleScanResult(
+        status: GoogleScanStatus.error,
+        message: 'حدث خطأ أثناء تشغيل ماسح Google: $e',
+        error: e,
+      );
     } finally {
-      try {
-        await scanner.close();
-      } catch (e) {
-        debugPrint('Google Scanner close error: $e');
+      if (scanner != null) {
+        try {
+          await scanner.close();
+          debugPrint('[GoogleScanner] Scanner closed.');
+        } catch (e) {
+          debugPrint('[GoogleScanner] Close error: $e');
+        }
       }
     }
   }
