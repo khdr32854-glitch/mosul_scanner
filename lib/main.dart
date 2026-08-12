@@ -1,16 +1,16 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
-import 'package:image_picker/image_picker.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-import 'perspective_warp.dart';
 import 'google_scanner.dart';
+import 'perspective_warp.dart';
 
 /// ===============================================================
 /// ISOLATES (BACKGROUND TASKS)
@@ -21,9 +21,9 @@ img.Image? decodeImageIsolate(Uint8List bytes) {
 }
 
 Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
-  final img.Image source = args['image'];
-  final EnhanceMode mode = args['mode'];
-  final double intensity = args['intensity'];
+  final img.Image source = args['image'] as img.Image;
+  final EnhanceMode mode = args['mode'] as EnhanceMode;
+  final double intensity = args['intensity'] as double;
 
   final processed = ImageEnhancer.apply(source, mode, intensity);
 
@@ -32,9 +32,7 @@ Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
     noAlpha = processed.convert(numChannels: 3);
   }
 
-  final bytes = Uint8List.fromList(
-    img.encodeJpg(noAlpha, quality: 85),
-  );
+  final bytes = Uint8List.fromList(img.encodeJpg(noAlpha, quality: 85));
 
   return {
     'bytes': bytes,
@@ -44,24 +42,24 @@ Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
 }
 
 img.Image cropFinalIsolate(Map<String, dynamic> args) {
-  final img.Image source = args['image'];
+  final img.Image source = args['image'] as img.Image;
 
-  var cropped = ManualCrop.cropPerspective(
+  final cropped = ManualCrop.cropPerspective(
     source,
-    args['x1'],
-    args['y1'],
-    args['x2'],
-    args['y2'],
-    args['x3'],
-    args['y3'],
-    args['x4'],
-    args['y4'],
+    args['x1'] as double,
+    args['y1'] as double,
+    args['x2'] as double,
+    args['y2'] as double,
+    args['x3'] as double,
+    args['y3'] as double,
+    args['x4'] as double,
+    args['y4'] as double,
   );
 
   return ImageEnhancer.apply(
     cropped,
-    args['mode'],
-    args['intensity'],
+    args['mode'] as EnhanceMode,
+    args['intensity'] as double,
   );
 }
 
@@ -88,19 +86,17 @@ class ImageUtils {
     if (image.numChannels == 4) {
       try {
         toEncode = image.convert(numChannels: 3);
-      } catch (e) {
+      } catch (_) {
         toEncode = image;
       }
     }
 
     try {
       return Uint8List.fromList(
-        img.encodeJpg(
-          toEncode,
-          quality: quality,
-        ),
+        img.encodeJpg(toEncode, quality: quality),
       );
     } catch (e) {
+      debugPrint('JPEG encode error: $e');
       return Uint8List(0);
     }
   }
@@ -190,7 +186,6 @@ class ImageEnhancer {
       case EnhanceMode.bw:
         try {
           final gray = img.grayscale(image);
-
           final normalized = img.normalize(
             gray,
             min: 0,
@@ -215,6 +210,10 @@ class ImageEnhancer {
     }
   }
 }
+
+/// ===============================================================
+/// MANUAL CROP / PERSPECTIVE
+/// ===============================================================
 
 class ManualCrop {
   static img.Image cropPerspective(
@@ -255,26 +254,21 @@ class ManualCrop {
     ];
 
     try {
-      return PerspectiveWarp.warp(
-        source,
-        corners,
-      );
+      return PerspectiveWarp.warp(source, corners);
     } catch (e) {
+      debugPrint('Perspective crop error: $e');
       return img.Image.from(source);
     }
   }
 }
 
 /// ===============================================================
-/// MAIN ENTRY POINT & APP THEME
+/// APP
 /// ===============================================================
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  runApp(
-    const MosulScannerApp(),
-  );
+  runApp(const MosulScannerApp());
 }
 
 class MosulScannerApp extends StatelessWidget {
@@ -310,18 +304,13 @@ class MosulScannerApp extends StatelessWidget {
 
 class DocumentItem {
   final String id;
-
   img.Image image;
   Uint8List cachedBytes;
-
   double widthMm;
   double heightMm;
-
   double xMm;
   double yMm;
-
   int rotationAngle;
-
   bool isPhotoMode;
   bool hasCurvedCorners;
 
@@ -341,9 +330,7 @@ class DocumentItem {
   img.Image get rotatedImage {
     final angle = ((rotationAngle % 360) + 360) % 360;
 
-    if (angle == 90 ||
-        angle == 180 ||
-        angle == 270) {
+    if (angle == 90 || angle == 180 || angle == 270) {
       return img.copyRotate(
         image,
         angle: angle,
@@ -359,12 +346,8 @@ class DocumentItem {
     if (angle == 0) return;
 
     image = rotatedImage;
-
     cachedBytes = Uint8List.fromList(
-      img.encodeJpg(
-        image,
-        quality: 95,
-      ),
+      img.encodeJpg(image, quality: 95),
     );
 
     if (angle == 90 || angle == 270) {
@@ -378,12 +361,8 @@ class DocumentItem {
 
   void replaceImage(img.Image newImage) {
     image = newImage;
-
     cachedBytes = Uint8List.fromList(
-      img.encodeJpg(
-        newImage,
-        quality: 95,
-      ),
+      img.encodeJpg(newImage, quality: 95),
     );
 
     rotationAngle = 0;
@@ -407,8 +386,7 @@ class MainScannerScreen extends StatefulWidget {
       _MainScannerScreenState();
 }
 
-class _MainScannerScreenState
-    extends State<MainScannerScreen> {
+class _MainScannerScreenState extends State<MainScannerScreen> {
   final List<DocumentItem> _items = [];
 
   DocumentItem? _activeItem;
@@ -416,11 +394,11 @@ class _MainScannerScreenState
   bool _isScanning = false;
   bool _isLoadingImages = false;
 
+  String _activeTabMode = 'docs';
+
   static const double pageWidthMm = 210.0;
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
-
-  String _activeTabMode = 'docs';
 
   Future<void> _openGoogleScanner({
     bool fromGallery = false,
@@ -429,6 +407,7 @@ class _MainScannerScreenState
 
     setState(() {
       _isScanning = true;
+      _isLoadingImages = true;
     });
 
     try {
@@ -439,10 +418,6 @@ class _MainScannerScreenState
       if (!mounted) return;
 
       if (paths != null && paths.isNotEmpty) {
-        setState(() {
-          _isLoadingImages = true;
-        });
-
         int added = 0;
 
         for (final path in paths) {
@@ -460,13 +435,13 @@ class _MainScannerScreenState
               bytes,
             );
 
-            if (decoded != null) {
+            if (decoded != null &&
+                ImageUtils.isValid(decoded)) {
               _addDecodedImage(
                 decoded,
                 isPhoto: false,
                 curved: true,
               );
-
               added++;
             }
           } catch (e) {
@@ -514,7 +489,6 @@ class _MainScannerScreenState
         'الصورة غير صالحة',
         error: true,
       );
-
       return;
     }
 
@@ -530,15 +504,13 @@ class _MainScannerScreenState
           isPhoto || _activeTabMode == 'photos';
 
       final width = photoMode ? 36.0 : 85.0;
-
       final ratio =
           decodedImage.height / decodedImage.width;
 
       final height =
           photoMode ? 45.0 : width * ratio;
 
-      final offset =
-          _items.length * 4.0;
+      final offset = _items.length * 4.0;
 
       final item = DocumentItem(
         id: DateTime.now()
@@ -565,24 +537,27 @@ class _MainScannerScreenState
     bool isPhoto = false,
     bool curved = false,
   }) {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+
+    if (active == null) return;
 
     setState(() {
-      _activeItem!.widthMm = width;
-      _activeItem!.heightMm = height;
-      _activeItem!.isPhotoMode = isPhoto;
-      _activeItem!.hasCurvedCorners = curved;
+      active.widthMm = width;
+      active.heightMm = height;
+      active.isPhotoMode = isPhoto;
+      active.hasCurvedCorners = curved;
     });
   }
 
   void _rotateActiveItem() {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+
+    if (active == null) return;
 
     setState(() {
-      _activeItem!.rotationAngle =
-          (_activeItem!.rotationAngle + 90) % 360;
-
-      _activeItem!.applyRotation();
+      active.rotationAngle =
+          (active.rotationAngle + 90) % 360;
+      active.applyRotation();
     });
   }
 
@@ -596,12 +571,9 @@ class _MainScannerScreenState
         id: DateTime.now()
             .microsecondsSinceEpoch
             .toString(),
-        image: img.Image.from(
-          source.image,
-        ),
-        cachedBytes: Uint8List.fromList(
-          source.cachedBytes,
-        ),
+        image: img.Image.from(source.image),
+        cachedBytes:
+            Uint8List.fromList(source.cachedBytes),
         widthMm: source.widthMm,
         heightMm: source.heightMm,
         xMm: source.xMm + 5,
@@ -622,7 +594,6 @@ class _MainScannerScreenState
     setState(() {
       double currentX = pageMarginMm;
       double currentY = pageMarginMm;
-
       double rowHeight = 0;
 
       for (final item in _items) {
@@ -637,7 +608,6 @@ class _MainScannerScreenState
         item.yMm = currentY;
 
         currentX += item.widthMm + 5;
-
         rowHeight =
             math.max(rowHeight, item.heightMm);
       }
@@ -647,10 +617,15 @@ class _MainScannerScreenState
   Future<void> _manualCropActiveItem() async {
     final active = _activeItem;
 
-    if (active == null) return;
+    if (active == null) {
+      _showMessage(
+        'اختر صورة أولاً',
+        error: true,
+      );
+      return;
+    }
 
-    final result =
-        await Navigator.push<img.Image>(
+    final result = await Navigator.push<img.Image>(
       context,
       MaterialPageRoute(
         builder: (_) => CropScreen(
@@ -667,11 +642,12 @@ class _MainScannerScreenState
   }
 
   void _deleteActiveItem() {
-    if (_activeItem == null) return;
+    final active = _activeItem;
+
+    if (active == null) return;
 
     setState(() {
-      _items.remove(_activeItem);
-
+      _items.remove(active);
       _activeItem =
           _items.isEmpty ? null : _items.last;
     });
@@ -683,7 +659,6 @@ class _MainScannerScreenState
         'لا توجد مستندات للطباعة',
         error: true,
       );
-
       return;
     }
 
@@ -699,35 +674,28 @@ class _MainScannerScreenState
               children: _items.map((item) {
                 final rotated = item.rotatedImage;
 
-                final bytes =
-                    ImageUtils.encodeJpg(
+                final bytes = ImageUtils.encodeJpg(
                   rotated,
                   quality: 95,
                 );
 
                 return pw.Positioned(
-                  left:
-                      item.xMm * PdfPageFormat.mm,
-                  top:
-                      item.yMm * PdfPageFormat.mm,
+                  left: item.xMm * PdfPageFormat.mm,
+                  top: item.yMm * PdfPageFormat.mm,
                   child: pw.ClipRRect(
                     horizontalRadius:
                         item.hasCurvedCorners
-                            ? 3.5 *
-                                PdfPageFormat.mm
+                            ? 3.5 * PdfPageFormat.mm
                             : 0,
                     verticalRadius:
                         item.hasCurvedCorners
-                            ? 3.5 *
-                                PdfPageFormat.mm
+                            ? 3.5 * PdfPageFormat.mm
                             : 0,
                     child: pw.SizedBox(
                       width:
-                          item.widthMm *
-                              PdfPageFormat.mm,
+                          item.widthMm * PdfPageFormat.mm,
                       height:
-                          item.heightMm *
-                              PdfPageFormat.mm,
+                          item.heightMm * PdfPageFormat.mm,
                       child: pw.Image(
                         pw.MemoryImage(bytes),
                         fit: pw.BoxFit.fill,
@@ -799,15 +767,13 @@ class _MainScannerScreenState
             ),
             onPressed: _exportAndPrint,
           ),
-
           IconButton(
             tooltip: 'التقاط بواسطة جوجل الذكي',
             icon: _isScanning && !_isLoadingImages
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child:
-                        CircularProgressIndicator(
+                    child: CircularProgressIndicator(
                       strokeWidth: 2,
                       color: Color(0xFF0284C7),
                     ),
@@ -816,23 +782,19 @@ class _MainScannerScreenState
                     Icons.camera_alt_outlined,
                     color: Color(0xFF0284C7),
                   ),
-            onPressed:
-                _isScanning || _isLoadingImages
-                    ? null
-                    : () => _openGoogleScanner(
-                          fromGallery: false,
-                        ),
+            onPressed: _isScanning || _isLoadingImages
+                ? null
+                : () => _openGoogleScanner(
+                      fromGallery: false,
+                    ),
           ),
-
           IconButton(
-            tooltip:
-                'استيراد من المعرض (جوجل الذكي)',
+            tooltip: 'استيراد من المعرض (جوجل الذكي)',
             icon: _isLoadingImages
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child:
-                        CircularProgressIndicator(
+                    child: CircularProgressIndicator(
                       strokeWidth: 2,
                       color: Color(0xFF0284C7),
                     ),
@@ -841,12 +803,11 @@ class _MainScannerScreenState
                     Icons.photo_library_outlined,
                     color: Color(0xFF0284C7),
                   ),
-            onPressed:
-                _isScanning || _isLoadingImages
-                    ? null
-                    : () => _openGoogleScanner(
-                          fromGallery: true,
-                        ),
+            onPressed: _isScanning || _isLoadingImages
+                ? null
+                : () => _openGoogleScanner(
+                      fromGallery: true,
+                    ),
           ),
         ],
       ),
@@ -865,10 +826,8 @@ class _MainScannerScreenState
                   ),
                 ),
                 child: ListView(
-                  scrollDirection:
-                      Axis.horizontal,
-                  padding:
-                      const EdgeInsets.symmetric(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(
                     horizontal: 8,
                     vertical: 6,
                   ),
@@ -881,44 +840,37 @@ class _MainScannerScreenState
                         () => _activeTabMode = 'docs',
                       ),
                     ),
-
                     _buildToolBtn(
                       'الصور الشخصية',
                       Icons.person_outline,
                       _activeTabMode == 'photos',
                       () => setState(
-                        () => _activeTabMode =
-                            'photos',
+                        () => _activeTabMode = 'photos',
                       ),
                     ),
-
                     const VerticalDivider(
                       color: Color(0xFFCBD5E1),
                       indent: 6,
                       endIndent: 6,
                     ),
-
                     _buildActionBtn(
                       'قص وتوضيح سحري',
                       Icons.crop,
                       _manualCropActiveItem,
                       const Color(0xFF0EA5E9),
                     ),
-
                     _buildActionBtn(
                       'تنسيق تلقائي',
                       Icons.grid_view,
                       _autoAlignItems,
                       const Color(0xFF10B981),
                     ),
-
                     _buildActionBtn(
                       'تدوير',
                       Icons.rotate_right,
                       _rotateActiveItem,
                       const Color(0xFF64748B),
                     ),
-
                     _buildActionBtn(
                       'نسخ',
                       Icons.copy_all,
@@ -928,14 +880,12 @@ class _MainScannerScreenState
                   ],
                 ),
               ),
-
               Expanded(
                 child: Row(
                   children: [
                     Container(
                       width: 115,
-                      decoration:
-                          const BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: Colors.white,
                         border: Border(
                           left: BorderSide(
@@ -947,70 +897,55 @@ class _MainScannerScreenState
                         children: [
                           Container(
                             padding:
-                                const EdgeInsets
-                                    .symmetric(
+                                const EdgeInsets.symmetric(
                               vertical: 10,
                             ),
                             width: double.infinity,
-                            color:
-                                const Color(0xFFF8FAFC),
+                            color: const Color(0xFFF8FAFC),
                             child: const Text(
                               'المقاسات القياسية',
-                              textAlign:
-                                  TextAlign.center,
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                color:
-                                    Color(0xFF475569),
+                                color: Color(0xFF475569),
                                 fontSize: 10,
-                                fontWeight:
-                                    FontWeight.bold,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
-
                           Expanded(
                             child: ListView(
                               padding:
-                                  const EdgeInsets
-                                      .all(6),
+                                  const EdgeInsets.all(6),
                               children:
-                                  _activeTabMode ==
-                                          'docs'
+                                  _activeTabMode == 'docs'
                                       ? [
                                           _buildSizeBtn(
                                             'بطاقة موحدة',
                                             '8.5 × 5.4 سم',
-                                            () =>
-                                                _resizeActiveItem(
+                                            () => _resizeActiveItem(
                                               85,
                                               54,
-                                              curved:
-                                                  true,
+                                              curved: true,
                                             ),
                                           ),
                                           _buildSizeBtn(
                                             'بطاقة سكن',
                                             '8.8 × 5.8 سم',
-                                            () =>
-                                                _resizeActiveItem(
+                                            () => _resizeActiveItem(
                                               88,
                                               58,
-                                              curved:
-                                                  true,
+                                              curved: true,
                                             ),
                                           ),
                                           _buildSizeBtn(
                                             'ورقة A4',
                                             '21 × 29.7 سم',
-                                            () =>
-                                                _resizeActiveItem(
+                                            () => _resizeActiveItem(
                                               210,
                                               297,
-                                              curved:
-                                                  false,
+                                              curved: false,
                                             ),
-                                            clr:
-                                                const Color(
+                                            clr: const Color(
                                               0xFF0D9488,
                                             ),
                                           ),
@@ -1019,40 +954,34 @@ class _MainScannerScreenState
                                           _buildSizeBtn(
                                             'صورة معاملة',
                                             '3.6 × 4.5 سم',
-                                            () =>
-                                                _resizeActiveItem(
+                                            () => _resizeActiveItem(
                                               36,
                                               45,
-                                              isPhoto:
-                                                  true,
+                                              isPhoto: true,
                                             ),
                                           ),
                                           _buildSizeBtn(
                                             'صورة مصغرة',
                                             '2.5 × 3.4 سم',
-                                            () =>
-                                                _resizeActiveItem(
+                                            () => _resizeActiveItem(
                                               25,
                                               34,
-                                              isPhoto:
-                                                  true,
+                                              isPhoto: true,
                                             ),
                                           ),
                                         ],
                             ),
                           ),
-
                           if (_activeItem != null)
                             Padding(
                               padding:
-                                  const EdgeInsets
-                                      .all(6),
+                                  const EdgeInsets.all(6),
                               child: SizedBox(
                                 width: double.infinity,
                                 child:
                                     ElevatedButton.icon(
-                                  style: ElevatedButton
-                                      .styleFrom(
+                                  style:
+                                      ElevatedButton.styleFrom(
                                     backgroundColor:
                                         const Color(
                                       0xFFFEE2E2,
@@ -1071,16 +1000,13 @@ class _MainScannerScreenState
                                         RoundedRectangleBorder(
                                       borderRadius:
                                           BorderRadius
-                                              .circular(
-                                        6,
-                                      ),
+                                              .circular(6),
                                     ),
                                   ),
                                   onPressed:
                                       _deleteActiveItem,
                                   icon: const Icon(
-                                    Icons
-                                        .delete_outline,
+                                    Icons.delete_outline,
                                     size: 16,
                                   ),
                                   label: const Text(
@@ -1088,8 +1014,7 @@ class _MainScannerScreenState
                                     style: TextStyle(
                                       fontSize: 10,
                                       fontWeight:
-                                          FontWeight
-                                              .bold,
+                                          FontWeight.bold,
                                     ),
                                   ),
                                 ),
@@ -1098,50 +1023,38 @@ class _MainScannerScreenState
                         ],
                       ),
                     ),
-
                     Expanded(
                       child: Container(
-                        color:
-                            const Color(0xFFE2E8F0),
+                        color: const Color(0xFFE2E8F0),
                         child: Center(
                           child: LayoutBuilder(
-                            builder: (
-                              context,
-                              constraints,
-                            ) {
+                            builder:
+                                (context, constraints) {
                               final scaleX =
                                   (constraints.maxWidth -
                                           30) /
                                       pageWidthMm;
-
                               final scaleY =
                                   (constraints.maxHeight -
                                           30) /
                                       pageHeightMm;
-
-                              final scale =
-                                  math.min(
+                              final scale = math.min(
                                 scaleX,
                                 scaleY,
                               );
 
                               return Container(
                                 width:
-                                    pageWidthMm *
-                                        scale,
+                                    pageWidthMm * scale,
                                 height:
-                                    pageHeightMm *
-                                        scale,
+                                    pageHeightMm * scale,
                                 decoration:
                                     BoxDecoration(
                                   color: Colors.white,
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors
-                                          .black
-                                          .withAlpha(
-                                        20,
-                                      ),
+                                      color: Colors.black
+                                          .withAlpha(20),
                                       blurRadius: 12,
                                       offset:
                                           const Offset(
@@ -1152,96 +1065,86 @@ class _MainScannerScreenState
                                   ],
                                 ),
                                 child: Stack(
-                                  children:
-                                      _items.map(
-                                    (item) {
-                                      final active =
-                                          _activeItem
-                                                  ?.id ==
-                                              item.id;
+                                  children: _items
+                                      .map((item) {
+                                    final active =
+                                        _activeItem?.id ==
+                                            item.id;
 
-                                      final radius = item
-                                              .hasCurvedCorners
-                                          ? BorderRadius
-                                              .circular(
-                                              3.5 *
-                                                  scale,
-                                            )
-                                          : BorderRadius
-                                              .zero;
+                                    final radius =
+                                        item.hasCurvedCorners
+                                            ? BorderRadius
+                                                .circular(
+                                                3.5 * scale,
+                                              )
+                                            : BorderRadius
+                                                .zero;
 
-                                      return Positioned(
-                                        left:
-                                            item.xMm *
-                                                scale,
-                                        top:
-                                            item.yMm *
-                                                scale,
-                                        width:
-                                            item.widthMm *
-                                                scale,
-                                        height:
-                                            item.heightMm *
-                                                scale,
-                                        child:
-                                            GestureDetector(
-                                          onTap: () =>
-                                              setState(
-                                            () =>
-                                                _activeItem =
-                                                    item,
-                                          ),
-                                          onPanUpdate:
-                                              (details) {
-                                            setState(() {
-                                              item.xMm +=
-                                                  details
-                                                          .delta
-                                                          .dx /
-                                                      scale;
-
-                                              item.yMm +=
-                                                  details
-                                                          .delta
-                                                          .dy /
-                                                      scale;
-                                            });
-                                          },
-                                          child:
-                                              Container(
-                                            decoration:
-                                                BoxDecoration(
-                                              borderRadius:
-                                                  radius,
-                                              border:
-                                                  Border.all(
-                                                color: active
-                                                    ? const Color(
-                                                        0xFF0284C7,
-                                                      )
-                                                    : Colors
-                                                        .transparent,
-                                                width: active
-                                                    ? 2
-                                                    : 1,
-                                              ),
+                                    return Positioned(
+                                      left: item.xMm * scale,
+                                      top: item.yMm * scale,
+                                      width:
+                                          item.widthMm *
+                                              scale,
+                                      height:
+                                          item.heightMm *
+                                              scale,
+                                      child:
+                                          GestureDetector(
+                                        onTap: () =>
+                                            setState(
+                                          () => _activeItem =
+                                              item,
+                                        ),
+                                        onPanUpdate:
+                                            (details) {
+                                          setState(() {
+                                            item.xMm +=
+                                                details
+                                                        .delta
+                                                        .dx /
+                                                    scale;
+                                            item.yMm +=
+                                                details
+                                                        .delta
+                                                        .dy /
+                                                    scale;
+                                          });
+                                        },
+                                        child: Container(
+                                          decoration:
+                                              BoxDecoration(
+                                            borderRadius:
+                                                radius,
+                                            border:
+                                                Border.all(
+                                              color: active
+                                                  ? const Color(
+                                                      0xFF0284C7,
+                                                    )
+                                                  : Colors
+                                                      .transparent,
+                                              width: active
+                                                  ? 2
+                                                  : 1,
                                             ),
+                                          ),
+                                          child:
+                                              ClipRRect(
+                                            borderRadius:
+                                                radius,
                                             child:
-                                                ClipRRect(
-                                              borderRadius:
-                                                  radius,
-                                              child:
-                                                  Image.memory(
-                                                item.cachedBytes,
-                                                fit: BoxFit
-                                                    .fill,
-                                              ),
+                                                Image.memory(
+                                              item.cachedBytes,
+                                              fit: BoxFit.fill,
+                                              gaplessPlayback:
+                                                  true,
                                             ),
                                           ),
                                         ),
-                                      );
-                                    },
-                                  ).toList(),
+                                      ),
+                                    );
+                                  }).toList(),
                                 ),
                               );
                             },
@@ -1254,13 +1157,11 @@ class _MainScannerScreenState
               ),
             ],
           ),
-
           if (_isLoadingImages && _isScanning)
             Container(
               color: Colors.black12,
               child: const Center(
-                child:
-                    CircularProgressIndicator(
+                child: CircularProgressIndicator(
                   color: Color(0xFF0284C7),
                 ),
               ),
@@ -1277,15 +1178,14 @@ class _MainScannerScreenState
     VoidCallback onTap,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 3,
+      ),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(
+          padding: const EdgeInsets.symmetric(
             horizontal: 10,
             vertical: 4,
           ),
@@ -1293,8 +1193,7 @@ class _MainScannerScreenState
             color: selected
                 ? const Color(0xFFE0F2FE)
                 : Colors.transparent,
-            borderRadius:
-                BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: selected
                   ? const Color(0xFF0284C7)
@@ -1315,8 +1214,7 @@ class _MainScannerScreenState
                 label,
                 style: TextStyle(
                   fontSize: 11,
-                  fontWeight:
-                      FontWeight.bold,
+                  fontWeight: FontWeight.bold,
                   color: selected
                       ? const Color(0xFF0284C7)
                       : const Color(0xFF64748B),
@@ -1336,22 +1234,20 @@ class _MainScannerScreenState
     Color color,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 3,
+      ),
       child: InkWell(
         onTap: onTap,
-        borderRadius:
-            BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(
+          padding: const EdgeInsets.symmetric(
             horizontal: 8,
             vertical: 4,
           ),
           decoration: BoxDecoration(
             color: color.withAlpha(25),
-            borderRadius:
-                BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: color.withAlpha(76),
             ),
@@ -1368,8 +1264,7 @@ class _MainScannerScreenState
                 label,
                 style: TextStyle(
                   fontSize: 10,
-                  fontWeight:
-                      FontWeight.bold,
+                  fontWeight: FontWeight.bold,
                   color: color,
                 ),
               ),
@@ -1384,29 +1279,25 @@ class _MainScannerScreenState
     String title,
     String subtitle,
     VoidCallback onTap, {
-    Color clr =
-        const Color(0xFF0284C7),
+    Color clr = const Color(0xFF0284C7),
   }) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(
+        vertical: 3,
+      ),
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
-          padding:
-              const EdgeInsets.symmetric(
+          padding: const EdgeInsets.symmetric(
             vertical: 6,
             horizontal: 4,
           ),
-          backgroundColor:
-              clr.withAlpha(20),
+          backgroundColor: clr.withAlpha(20),
           foregroundColor: clr,
           side: BorderSide(
             color: clr.withAlpha(51),
           ),
-          shape:
-              RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
           ),
           elevation: 0,
         ),
@@ -1417,8 +1308,7 @@ class _MainScannerScreenState
               title,
               style: TextStyle(
                 fontSize: 10,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
                 color: clr,
               ),
             ),
@@ -1427,8 +1317,7 @@ class _MainScannerScreenState
               subtitle,
               style: TextStyle(
                 fontSize: 8,
-                color:
-                    clr.withAlpha(204),
+                color: clr.withAlpha(204),
               ),
             ),
           ],
@@ -1442,8 +1331,7 @@ class _MainScannerScreenState
 /// CROP PAINTER
 /// ===============================================================
 
-class CropBoxPainter
-    extends CustomPainter {
+class CropBoxPainter extends CustomPainter {
   final Offset p1;
   final Offset p2;
   final Offset p3;
@@ -1457,18 +1345,12 @@ class CropBoxPainter
   );
 
   @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
+  void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color =
-          const Color(0xFF0284C7)
+      ..color = const Color(0xFF0284C7)
       ..strokeWidth = 2.5
-      ..style =
-          PaintingStyle.stroke
-      ..strokeJoin =
-          StrokeJoin.round;
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round;
 
     final path = Path()
       ..moveTo(p1.dx, p1.dy)
@@ -1477,25 +1359,22 @@ class CropBoxPainter
       ..lineTo(p4.dx, p4.dy)
       ..close();
 
-    canvas.drawPath(
-      path,
-      paint,
-    );
+    canvas.drawPath(path, paint);
   }
 
   @override
   bool shouldRepaint(
     covariant CustomPainter oldDelegate,
-  ) =>
-      true;
+  ) {
+    return true;
+  }
 }
 
 /// ===============================================================
 /// CROP SCREEN
 /// ===============================================================
 
-class CropScreen
-    extends StatefulWidget {
+class CropScreen extends StatefulWidget {
   final img.Image image;
 
   const CropScreen({
@@ -1508,8 +1387,7 @@ class CropScreen
       _CropScreenState();
 }
 
-class _CropScreenState
-    extends State<CropScreen> {
+class _CropScreenState extends State<CropScreen> {
   late img.Image _workingImage;
 
   double _x1 = 0.05;
@@ -1524,10 +1402,8 @@ class _CropScreenState
   double _x4 = 0.05;
   double _y4 = 0.95;
 
-  EnhanceMode _filter =
-      EnhanceMode.magic;
-
-  double _filterIntensity = 0.8;
+  EnhanceMode _filter = EnhanceMode.magic;
+  final double _filterIntensity = 0.8;
 
   bool _isProcessing = true;
   bool _isSaving = false;
@@ -1540,14 +1416,14 @@ class _CropScreenState
   void initState() {
     super.initState();
 
-    _workingImage =
-        widget.image;
+    _workingImage = widget.image;
 
     _updateDisplayBytesAsync();
   }
 
-  Future<void>
-      _updateDisplayBytesAsync() async {
+  Future<void> _updateDisplayBytesAsync() async {
+    if (!mounted) return;
+
     setState(() {
       _isProcessing = true;
     });
@@ -1558,20 +1434,30 @@ class _CropScreenState
         {
           'image': _workingImage,
           'mode': _filter,
-          'intensity':
-              _filterIntensity,
+          'intensity': _filterIntensity,
         },
       );
 
       if (!mounted) return;
 
-      setState(() {
-        _displayBytes =
-            result['bytes'];
+      final bytes = result['bytes'];
 
+      if (bytes is! Uint8List) {
+        setState(() {
+          _isProcessing = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _displayBytes = bytes;
         _isProcessing = false;
       });
     } catch (e) {
+      debugPrint(
+        'Preview processing error: $e',
+      );
+
       if (mounted) {
         setState(() {
           _isProcessing = false;
@@ -1580,28 +1466,21 @@ class _CropScreenState
     }
   }
 
-  void _rotateImage(
-    bool clockwise,
-  ) {
-    final angle =
-        clockwise ? 90 : 270;
+  void _rotateImage(bool clockwise) {
+    final angle = clockwise ? 90 : 270;
 
     setState(() {
-      _workingImage =
-          img.copyRotate(
+      _workingImage = img.copyRotate(
         _workingImage,
         angle: angle,
       );
 
       _x1 = 0.05;
       _y1 = 0.05;
-
       _x2 = 0.95;
       _y2 = 0.05;
-
       _x3 = 0.95;
       _y3 = 0.95;
-
       _x4 = 0.05;
       _y4 = 0.95;
     });
@@ -1613,38 +1492,18 @@ class _CropScreenState
     setState(() {
       _x1 = 0.0;
       _y1 = 0.0;
-
       _x2 = 1.0;
       _y2 = 0.0;
-
       _x3 = 1.0;
       _y3 = 1.0;
-
       _x4 = 0.0;
       _y4 = 1.0;
     });
   }
 
-  void _showSnack(
-    String message,
-  ) {
-    if (!mounted) return;
+  Future<void> _applyCropAsync() async {
+    if (_isSaving) return;
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            message,
-            textDirection:
-                TextDirection.rtl,
-          ),
-        ),
-      );
-  }
-
-  Future<void>
-      _applyCropAsync() async {
     setState(() {
       _isSaving = true;
     });
@@ -1654,32 +1513,27 @@ class _CropScreenState
         cropFinalIsolate,
         {
           'image': _workingImage,
-
           'x1': _x1,
           'y1': _y1,
-
           'x2': _x2,
           'y2': _y2,
-
           'x3': _x3,
           'y3': _y3,
-
           'x4': _x4,
           'y4': _y4,
-
           'mode': _filter,
-          'intensity':
-              _filterIntensity,
+          'intensity': _filterIntensity,
         },
       );
 
       if (mounted) {
-        Navigator.pop(
-          context,
-          cropped,
-        );
+        Navigator.pop(context, cropped);
       }
     } catch (e) {
+      debugPrint(
+        'Final crop processing error: $e',
+      );
+
       if (mounted) {
         setState(() {
           _isSaving = false;
@@ -1689,36 +1543,27 @@ class _CropScreenState
   }
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1E293B),
+        backgroundColor: const Color(0xFF1E293B),
         elevation: 0,
-
         leading: IconButton(
           icon: const Icon(
             Icons.arrow_back,
             color: Colors.white,
           ),
-          onPressed: () =>
-              Navigator.pop(context),
+          onPressed: () => Navigator.pop(context),
         ),
-
         title: const Text(
           'تعديل وقص المستند',
           style: TextStyle(
             color: Colors.white,
             fontSize: 14,
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
-
         actions: [
           IconButton(
             tooltip: 'تم والتصدير',
@@ -1726,35 +1571,28 @@ class _CropScreenState
                 ? const SizedBox(
                     width: 20,
                     height: 20,
-                    child:
-                        CircularProgressIndicator(
-                      color:
-                          Color(0xFF38BDF8),
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF38BDF8),
                       strokeWidth: 2,
                     ),
                   )
                 : const Icon(
                     Icons.check,
-                    color:
-                        Color(0xFF38BDF8),
+                    color: Color(0xFF38BDF8),
                     size: 28,
                   ),
-            onPressed: _isSaving
-                ? null
-                : _applyCropAsync,
+            onPressed:
+                _isSaving ? null : _applyCropAsync,
           ),
         ],
       ),
-
       body: Column(
         children: [
           Expanded(
             child: _isProcessing
                 ? const Center(
-                    child:
-                        CircularProgressIndicator(
-                      color:
-                          Color(0xFF0284C7),
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF0284C7),
                     ),
                   )
                 : LayoutBuilder(
@@ -1764,18 +1602,14 @@ class _CropScreenState
                     ) {
                       final cw =
                           constraints.maxWidth;
-
                       final ch =
                           constraints.maxHeight;
 
                       final iw =
-                          _workingImage
-                              .width
+                          _workingImage.width
                               .toDouble();
-
                       final ih =
-                          _workingImage
-                              .height
+                          _workingImage.height
                               .toDouble();
 
                       if (iw <= 0 ||
@@ -1785,21 +1619,16 @@ class _CropScreenState
                         return const SizedBox();
                       }
 
-                      final scale =
-                          math.min(
+                      final scale = math.min(
                         cw / iw,
                         ch / ih,
                       );
 
-                      final imgW =
-                          iw * scale;
-
-                      final imgH =
-                          ih * scale;
+                      final imgW = iw * scale;
+                      final imgH = ih * scale;
 
                       final imgL =
                           (cw - imgW) / 2;
-
                       final imgT =
                           (ch - imgH) / 2;
 
@@ -1807,8 +1636,7 @@ class _CropScreenState
                         width: cw,
                         height: ch,
                         child: Stack(
-                          clipBehavior:
-                              Clip.none,
+                          clipBehavior: Clip.none,
                           children:
                               _buildCropStackChildren(
                             cw,
@@ -1826,10 +1654,8 @@ class _CropScreenState
                     },
                   ),
           ),
-
           Container(
-            color:
-                const Color(0xFF1E293B),
+            color: const Color(0xFF1E293B),
             padding:
                 const EdgeInsets.symmetric(
               vertical: 6,
@@ -1837,38 +1663,29 @@ class _CropScreenState
             ),
             child: Row(
               mainAxisAlignment:
-                  MainAxisAlignment
-                      .spaceAround,
+                  MainAxisAlignment.spaceAround,
               children: [
                 _actionIconButton(
                   Icons.rotate_left,
                   'اليسار',
-                  () => _rotateImage(
-                    false,
-                  ),
+                  () => _rotateImage(false),
                 ),
-
                 _actionIconButton(
                   Icons.crop_rotate,
                   'مساواة',
                   _resetPerspective,
                 ),
-
                 _actionIconButton(
                   Icons.rotate_right,
                   'اليمين',
-                  () => _rotateImage(
-                    true,
-                  ),
+                  () => _rotateImage(true),
                 ),
               ],
             ),
           ),
-
           Container(
             height: 85,
-            color:
-                const Color(0xFF0F172A),
+            color: const Color(0xFF0F172A),
             child: ListView(
               scrollDirection:
                   Axis.horizontal,
@@ -1905,11 +1722,9 @@ class _CropScreenState
               ],
             ),
           ),
-
           Container(
             width: double.infinity,
-            color:
-                const Color(0xFF0F172A),
+            color: const Color(0xFF0F172A),
             padding:
                 const EdgeInsets.only(
               bottom: 12,
@@ -1917,45 +1732,32 @@ class _CropScreenState
               right: 16,
             ),
             child: ElevatedButton(
-              style: ElevatedButton
-                  .styleFrom(
+              style: ElevatedButton.styleFrom(
                 backgroundColor:
-                    const Color(
-                  0xFF0284C7,
-                ),
-                foregroundColor:
-                    Colors.white,
+                    const Color(0xFF0284C7),
+                foregroundColor: Colors.white,
                 padding:
-                    const EdgeInsets
-                        .symmetric(
+                    const EdgeInsets.symmetric(
                   vertical: 12,
                 ),
                 shape:
                     RoundedRectangleBorder(
                   borderRadius:
-                      BorderRadius.circular(
-                    8,
-                  ),
+                      BorderRadius.circular(8),
                 ),
               ),
-              onPressed: _isSaving
-                  ? null
-                  : _applyCropAsync,
+              onPressed:
+                  _isSaving ? null : _applyCropAsync,
               child: const Row(
                 mainAxisAlignment:
-                    MainAxisAlignment
-                        .center,
+                    MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.check,
-                    size: 20,
-                  ),
+                  Icon(Icons.check, size: 20),
                   SizedBox(width: 8),
                   Text(
-                    'حفظ واعتتماد التعديل',
+                    'حفظ واعتماد التعديل',
                     style: TextStyle(
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                       fontSize: 13,
                     ),
                   ),
@@ -1995,23 +1797,19 @@ class _CropScreenState
                     child:
                         CircularProgressIndicator(
                       strokeWidth: 2,
-                      color:
-                          Color(0xFF38BDF8),
+                      color: Color(0xFF38BDF8),
                     ),
                   )
                 : Icon(
                     icon,
-                    color:
-                        Colors.white70,
+                    color: Colors.white70,
                     size: 20,
                   ),
             const SizedBox(height: 3),
             Text(
               label,
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white60,
+              style: const TextStyle(
+                color: Colors.white60,
                 fontSize: 10,
               ),
             ),
@@ -2025,11 +1823,12 @@ class _CropScreenState
     String title,
     EnhanceMode mode,
   ) {
-    final selected =
-        _filter == mode;
+    final selected = _filter == mode;
 
     return GestureDetector(
       onTap: () {
+        if (_filter == mode) return;
+
         setState(() {
           _filter = mode;
         });
@@ -2042,24 +1841,16 @@ class _CropScreenState
             const EdgeInsets.symmetric(
           horizontal: 4,
         ),
-        decoration:
-            BoxDecoration(
+        decoration: BoxDecoration(
           color: selected
-              ? const Color(
-                  0xFF0284C7,
-                ).withAlpha(51)
-              : const Color(
-                  0xFF1E293B,
-                ),
+              ? const Color(0xFF0284C7)
+                  .withAlpha(51)
+              : const Color(0xFF1E293B),
           borderRadius:
-              BorderRadius.circular(
-            8,
-          ),
+              BorderRadius.circular(8),
           border: Border.all(
             color: selected
-                ? const Color(
-                    0xFF0284C7,
-                  )
+                ? const Color(0xFF0284C7)
                 : Colors.white12,
             width: selected ? 2 : 1,
           ),
@@ -2073,17 +1864,14 @@ class _CropScreenState
                   ? Icons.auto_awesome
                   : Icons.image_outlined,
               color: selected
-                  ? const Color(
-                      0xFF38BDF8,
-                    )
+                  ? const Color(0xFF38BDF8)
                   : Colors.white54,
               size: 20,
             ),
             const SizedBox(height: 6),
             Text(
               title,
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 color: selected
                     ? Colors.white
@@ -2100,8 +1888,7 @@ class _CropScreenState
     );
   }
 
-  List<Widget>
-      _buildCropStackChildren(
+  List<Widget> _buildCropStackChildren(
     double cw,
     double ch,
     double iw,
@@ -2144,7 +1931,6 @@ class _CropScreenState
           gaplessPlayback: true,
         ),
       ),
-
       Positioned.fill(
         child: CustomPaint(
           painter: CropBoxPainter(
@@ -2155,7 +1941,6 @@ class _CropScreenState
           ),
         ),
       ),
-
       _buildCornerDot(
         _x1,
         _y1,
@@ -2168,7 +1953,6 @@ class _CropScreenState
           _y1 = ny;
         }),
       ),
-
       _buildCornerDot(
         _x2,
         _y2,
@@ -2181,7 +1965,6 @@ class _CropScreenState
           _y2 = ny;
         }),
       ),
-
       _buildCornerDot(
         _x3,
         _y3,
@@ -2194,7 +1977,6 @@ class _CropScreenState
           _y3 = ny;
         }),
       ),
-
       _buildCornerDot(
         _x4,
         _y4,
@@ -2207,7 +1989,6 @@ class _CropScreenState
           _y4 = ny;
         }),
       ),
-
       _buildEdgeMidHandle(
         _x1,
         _y1,
@@ -2219,31 +2000,15 @@ class _CropScreenState
         imgH,
         (dnx, dny) => setState(() {
           _x1 =
-              (_x1 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x1 + dnx).clamp(0.0, 1.0);
           _y1 =
-              (_y1 + dny).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_y1 + dny).clamp(0.0, 1.0);
           _x2 =
-              (_x2 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x2 + dnx).clamp(0.0, 1.0);
           _y2 =
-              (_y2 + dny).clamp(
-            0.0,
-            1.0,
-          );
+              (_y2 + dny).clamp(0.0, 1.0);
         }),
       ),
-
       _buildEdgeMidHandle(
         _x2,
         _y2,
@@ -2255,31 +2020,15 @@ class _CropScreenState
         imgH,
         (dnx, dny) => setState(() {
           _x2 =
-              (_x2 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x2 + dnx).clamp(0.0, 1.0);
           _y2 =
-              (_y2 + dny).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_y2 + dny).clamp(0.0, 1.0);
           _x3 =
-              (_x3 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x3 + dnx).clamp(0.0, 1.0);
           _y3 =
-              (_y3 + dny).clamp(
-            0.0,
-            1.0,
-          );
+              (_y3 + dny).clamp(0.0, 1.0);
         }),
       ),
-
       _buildEdgeMidHandle(
         _x3,
         _y3,
@@ -2291,31 +2040,15 @@ class _CropScreenState
         imgH,
         (dnx, dny) => setState(() {
           _x3 =
-              (_x3 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x3 + dnx).clamp(0.0, 1.0);
           _y3 =
-              (_y3 + dny).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_y3 + dny).clamp(0.0, 1.0);
           _x4 =
-              (_x4 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x4 + dnx).clamp(0.0, 1.0);
           _y4 =
-              (_y4 + dny).clamp(
-            0.0,
-            1.0,
-          );
+              (_y4 + dny).clamp(0.0, 1.0);
         }),
       ),
-
       _buildEdgeMidHandle(
         _x4,
         _y4,
@@ -2327,31 +2060,15 @@ class _CropScreenState
         imgH,
         (dnx, dny) => setState(() {
           _x4 =
-              (_x4 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x4 + dnx).clamp(0.0, 1.0);
           _y4 =
-              (_y4 + dny).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_y4 + dny).clamp(0.0, 1.0);
           _x1 =
-              (_x1 + dnx).clamp(
-            0.0,
-            1.0,
-          );
-
+              (_x1 + dnx).clamp(0.0, 1.0);
           _y1 =
-              (_y1 + dny).clamp(
-            0.0,
-            1.0,
-          );
+              (_y1 + dny).clamp(0.0, 1.0);
         }),
       ),
-
       _buildMagnifier(
         cw,
         ch,
@@ -2377,17 +2094,11 @@ class _CropScreenState
       double dny,
     ) onDelta,
   ) {
-    final mx =
-        (ax + bx) / 2;
+    final mx = (ax + bx) / 2;
+    final my = (ay + by) / 2;
 
-    final my =
-        (ay + by) / 2;
-
-    final centerX =
-        il + mx * iw;
-
-    final centerY =
-        it + my * ih;
+    final centerX = il + mx * iw;
+    final centerY = it + my * ih;
 
     final isHorizontal =
         (bx - ax).abs() >=
@@ -2397,60 +2108,46 @@ class _CropScreenState
       left: centerX - 14,
       top: centerY - 14,
       child: GestureDetector(
-        onPanStart: (_) =>
-            setState(
-          () => _dragFocalPoint =
-              Offset(
-            centerX,
-            centerY,
-          ),
-        ),
-
+        onPanStart: (_) {
+          setState(() {
+            _dragFocalPoint =
+                Offset(centerX, centerY);
+          });
+        },
         onPanUpdate: (details) {
           onDelta(
             details.delta.dx / iw,
             details.delta.dy / ih,
           );
 
-          setState(
-            () => _dragFocalPoint =
+          setState(() {
+            _dragFocalPoint =
                 (_dragFocalPoint ??
-                        Offset(
-                          centerX,
-                          centerY,
-                        )) +
-                    details.delta,
-          );
+                    Offset(centerX, centerY)) +
+                details.delta;
+          });
         },
-
-        onPanEnd: (_) =>
-            setState(
-          () => _dragFocalPoint =
-              null,
-        ),
-
+        onPanEnd: (_) {
+          setState(() {
+            _dragFocalPoint = null;
+          });
+        },
         child: Container(
           width: 28,
           height: 28,
-          alignment:
-              Alignment.center,
+          alignment: Alignment.center,
           child: Container(
             width:
                 isHorizontal ? 24 : 10,
             height:
                 isHorizontal ? 10 : 24,
-            decoration:
-                BoxDecoration(
+            decoration: BoxDecoration(
               color: Colors.white,
               borderRadius:
-                  BorderRadius.circular(
-                4,
-              ),
+                  BorderRadius.circular(4),
               border: Border.all(
                 color:
-                    const Color(
-                  0xFF0284C7,
-                ),
+                    const Color(0xFF0284C7),
                 width: 1.5,
               ),
               boxShadow: const [
@@ -2474,38 +2171,35 @@ class _CropScreenState
     double iw,
     double ih,
   ) {
-    if (_dragFocalPoint == null) {
+    final focal = _dragFocalPoint;
+
+    if (focal == null) {
       return const SizedBox.shrink();
     }
 
     const double lensSize = 110;
     const double zoom = 2.5;
 
-    final localX =
-        _dragFocalPoint!.dx - il;
+    final localX = focal.dx - il;
+    final localY = focal.dy - it;
 
-    final localY =
-        _dragFocalPoint!.dy - it;
-
-    double left =
-        (_dragFocalPoint!.dx -
-                lensSize / 2)
-            .clamp(
-      0.0,
-      math.max(
-        0.0,
-        cw - lensSize,
-      ),
-    );
+    final double left = (focal.dx -
+            lensSize / 2)
+        .clamp(
+          0.0,
+          math.max(
+            0.0,
+            cw - lensSize,
+          ),
+        )
+        .toDouble();
 
     double top =
-        _dragFocalPoint!.dy -
-            lensSize -
-            40;
+        focal.dy - lensSize - 40;
 
     if (top < 0) {
       top = math.min(
-        _dragFocalPoint!.dy + 40,
+        focal.dy + 40,
         math.max(
           0.0,
           ch - lensSize,
@@ -2520,8 +2214,7 @@ class _CropScreenState
         child: Container(
           width: lensSize,
           height: lensSize,
-          decoration:
-              BoxDecoration(
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
             border: Border.all(
               color: Colors.white,
@@ -2538,42 +2231,31 @@ class _CropScreenState
             child: Stack(
               children: [
                 Positioned(
-                  left:
-                      lensSize / 2 -
-                          localX * zoom,
-                  top:
-                      lensSize / 2 -
-                          localY * zoom,
-                  width:
-                      iw * zoom,
-                  height:
-                      ih * zoom,
-                  child:
-                      Image.memory(
+                  left: lensSize / 2 -
+                      localX * zoom,
+                  top: lensSize / 2 -
+                      localY * zoom,
+                  width: iw * zoom,
+                  height: ih * zoom,
+                  child: Image.memory(
                     _displayBytes,
                     fit: BoxFit.fill,
                   ),
                 ),
-
                 Center(
                   child: Container(
                     width: 2,
                     height: 16,
                     color:
-                        const Color(
-                      0xFF0284C7,
-                    ),
+                        const Color(0xFF0284C7),
                   ),
                 ),
-
                 Center(
                   child: Container(
                     width: 16,
                     height: 2,
                     color:
-                        const Color(
-                      0xFF0284C7,
-                    ),
+                        const Color(0xFF0284C7),
                   ),
                 ),
               ],
@@ -2597,76 +2279,58 @@ class _CropScreenState
     ) onMove,
   ) {
     return Positioned(
-      left:
-          il + rx * iw - 18,
-      top:
-          it + ry * ih - 18,
+      left: il + rx * iw - 18,
+      top: it + ry * ih - 18,
       child: GestureDetector(
-        onPanStart: (_) =>
-            setState(
-          () => _dragFocalPoint =
-              Offset(
-            il + rx * iw,
-            it + ry * ih,
-          ),
-        ),
-
+        onPanStart: (_) {
+          setState(() {
+            _dragFocalPoint = Offset(
+              il + rx * iw,
+              it + ry * ih,
+            );
+          });
+        },
         onPanUpdate: (details) {
           final currentX =
               il + rx * iw;
-
           final currentY =
               it + ry * ih;
 
           onMove(
-            (
-              (currentX +
-                          details.delta.dx -
-                      il) /
-                  iw
-            ).clamp(
-              0.0,
-              1.0,
-            ),
-            (
-              (currentY +
-                          details.delta.dy -
-                      it) /
-                  ih
-            ).clamp(
-              0.0,
-              1.0,
-            ),
+            ((currentX +
+                        details.delta.dx -
+                        il) /
+                    iw)
+                .clamp(0.0, 1.0),
+            ((currentY +
+                        details.delta.dy -
+                        it) /
+                    ih)
+                .clamp(0.0, 1.0),
           );
 
-          setState(
-            () => _dragFocalPoint =
+          setState(() {
+            _dragFocalPoint =
                 (_dragFocalPoint ??
-                        Offset(
-                          currentX,
-                          currentY,
-                        )) +
-                    details.delta,
-          );
+                    Offset(
+                      currentX,
+                      currentY,
+                    )) +
+                details.delta;
+          });
         },
-
-        onPanEnd: (_) =>
-            setState(
-          () => _dragFocalPoint =
-              null,
-        ),
-
+        onPanEnd: (_) {
+          setState(() {
+            _dragFocalPoint = null;
+          });
+        },
         child: Container(
           width: 36,
           height: 36,
-          decoration:
-              BoxDecoration(
+          decoration: BoxDecoration(
             color:
-                const Color(
-              0xFF0284C7,
-            ),
-            shape:
-                BoxShape.circle,
+                const Color(0xFF0284C7),
+            shape: BoxShape.circle,
             border: Border.all(
               color: Colors.white,
               width: 2,
