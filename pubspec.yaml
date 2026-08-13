@@ -1,11 +1,11 @@
 name: mosul_scanner
 description: "A professional document scanning and printing application."
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'none'
 
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.2.0 <4.0.0' # تأكد من توافق إصدار الـ SDK مع نسختك
+  sdk: '>=3.2.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -14,18 +14,19 @@ dependencies:
   # واجهة المستخدم الأساسية
   cupertino_icons: ^1.0.6
 
-  # مكتبات معالجة الصور
+  # مكتبات معالجة الصور وجلبها من المعرض/الكاميرا
   image: ^4.1.7
-  
-  # مكتبة جلب الصور من الكاميرا أو المعرض
   image_picker: ^1.1.2
   
   # مكتبات إنشاء وطباعة ملفات الـ PDF
   pdf: ^3.11.1
   printing: ^5.12.0
 
-  # الذكاء الاصطناعي واكتشاف حواف المستندات (القص التلقائي)
+  # مكتبة التحويل الهندسي الدقيق للقص (لتسطيح البطاقات المائلة)
   opencv_dart: ^1.0.0
+
+  # الذكاء الاصطناعي المدمج (لاكتشاف زوايا المستند بذكاء بشري)
+  tflite_flutter: ^0.10.4
 
 dev_dependencies:
   flutter_test:
@@ -35,6 +36,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # إذا كان لديك أي ملفات أو صور داخل التطبيق (Assets)، يمكنك إضافتها هنا مستقبلاً
-  # assets:
-  #   - assets/images/
+  # مسار ملفات الذكاء الاصطناعي
+  assets:
+    - assets/models/document_scanner.tflite
