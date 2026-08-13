@@ -1,5 +1,6 @@
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.compile.JavaCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 allprojects {
@@ -35,16 +36,16 @@ subprojects {
 
 allprojects {
 
-    // Java
+    // Java 17
     tasks.withType<JavaCompile>().configureEach {
         sourceCompatibility = "17"
         targetCompatibility = "17"
     }
 
-    // Kotlin
+    // Kotlin 17 - الطريقة الحديثة
     tasks.withType<KotlinCompile>().configureEach {
-        kotlinOptions {
-            jvmTarget = "17"
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 }
