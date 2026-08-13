@@ -23,24 +23,10 @@ tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
 
+// استهداف وتوحيد إصدارات الجافا والكوتلن لكل المهام مباشرة وبدون أخطاء
 allprojects {
-    afterEvaluate {
-        extensions.findByName("android")?.let { android ->
-            // توحيد إصدار الجافا والكوتلن عبر الـ Toolchain لمنع أي تضارب
-            val javaVersion = JavaVersion.VERSION_17
-            val javaVersionStr = "17"
-            
-            try {
-                // إعدادات الـ compileOptions لجافا
-                val compileOptions = android.javaClass.getMethod("getCompileOptions").invoke(android)
-                compileOptions.javaClass.getMethod("setSourceCompatibility", JavaVersion::class.java).invoke(compileOptions, javaVersion)
-                compileOptions.javaClass.getMethod("setTargetCompatibility", JavaVersion::class.java).invoke(compileOptions, javaVersion)
-            } catch (e: Exception) {}
-        }
+    tasks.withType<JavaCompile>().configureEach {
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
     }
-}
-
-tasks.withType<JavaCompile>().configureEach {
-    sourceCompatibility = "17"
-    targetCompatibility = "17"
 }
