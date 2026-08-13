@@ -24,8 +24,23 @@ tasks.register<Delete>("clean") {
 }
 
 allprojects {
-    tasks.withType<JavaCompile>().configureEach {
-        sourceCompatibility = "17"
-        targetCompatibility = "17"
+    afterEvaluate {
+        extensions.findByName("android")?.let { android ->
+            // توحيد إصدار الجافا والكوتلن عبر الـ Toolchain لمنع أي تضارب
+            val javaVersion = JavaVersion.VERSION_17
+            val javaVersionStr = "17"
+            
+            try {
+                // إعدادات الـ compileOptions لجافا
+                val compileOptions = android.javaClass.getMethod("getCompileOptions").invoke(android)
+                compileOptions.javaClass.getMethod("setSourceCompatibility", JavaVersion::class.java).invoke(compileOptions, javaVersion)
+                compileOptions.javaClass.getMethod("setTargetCompatibility", JavaVersion::class.java).invoke(compileOptions, javaVersion)
+            } catch (e: Exception) {}
+        }
     }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
 }
