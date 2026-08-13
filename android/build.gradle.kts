@@ -30,20 +30,20 @@ subprojects {
 
 /*
  * ============================================================
- * توحيد Java + Kotlin على JVM 17 (بعد تقييم كل المشاريع بالكامل)
+ * حل تعارض JVM target لـ tflite_flutter فقط (بدون التأثير على باقي الـ plugins)
  * ============================================================
  */
 
 gradle.projectsEvaluated {
-    rootProject.allprojects {
-        tasks.withType<JavaCompile>().configureEach {
-            sourceCompatibility = "17"
-            targetCompatibility = "17"
+    rootProject.subprojects.filter { it.name == "tflite_flutter" }.forEach { proj ->
+        proj.tasks.withType<JavaCompile>().configureEach {
+            sourceCompatibility = "11"
+            targetCompatibility = "11"
         }
 
-        tasks.withType<KotlinCompile>().configureEach {
+        proj.tasks.withType<KotlinCompile>().configureEach {
             compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_17)
+                jvmTarget.set(JvmTarget.JVM_11)
             }
         }
     }
