@@ -9,9 +9,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-import 'edge_detector.dart'; // الذكاء المؤقت (OpenCV)
 import 'crop_engine.dart';   // محرك التسطيح والقص
-import 'ai_edge_detector.dart'; // <--- استيراد ملف استكشاف الذكاء الاصطناعي الجديد
+import 'ai_edge_detector.dart'; // كاشف زوايا المستند بالذكاء الاصطناعي
 
 /// ===============================================================
 /// ISOLATES (BACKGROUND TASKS)
@@ -54,22 +53,6 @@ img.Image cropFinalIsolate(Map<String, dynamic> args) {
   );
   
   return ImageEnhancer.apply(cropped, args['mode'], args['intensity']);
-}
-
-List<double>? detectDocumentCornersIsolate(Map<String, dynamic> args) {
-  final Uint8List imageBytes = args['bytes'];
-  final double width = args['width'];
-  final double height = args['height'];
-
-  final corners = DocumentEdgeDetector.detect(imageBytes);
-  if (corners == null || corners.length != 4) return null;
-
-  return [
-    corners[0].dx / width, corners[0].dy / height,
-    corners[1].dx / width, corners[1].dy / height,
-    corners[2].dx / width, corners[2].dy / height,
-    corners[3].dx / width, corners[3].dy / height,
-  ];
 }
 
 /// ===============================================================
@@ -180,10 +163,10 @@ class ImageEnhancer {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 🚀 تشغيل كود الفحص عند فتح التطبيق لكشف سر موديل ClearScanner
+
+  // فحص تشخيصي اختياري لتحميل الموديل عند إقلاع التطبيق
   await AIDocumentDetector.inspectModel();
-  
+
   runApp(const MosulScannerApp());
 }
 
@@ -899,25 +882,22 @@ class _CropScreenState extends State<CropScreen> {
 
     try {
       final bytes = ImageUtils.encodeJpg(_workingImage, quality: 85);
-      
-      final flatCorners = await compute(detectDocumentCornersIsolate, {
-        'bytes': bytes,
-        'width': _workingImage.width.toDouble(),
-        'height': _workingImage.height.toDouble(),
-      });
+      final corners = await AIDocumentDetector.detect(bytes);
 
       if (!mounted) return;
 
-      if (flatCorners != null && flatCorners.length == 8) {
+      if (corners != null && corners.length == 4) {
+        final w = _workingImage.width.toDouble();
+        final h = _workingImage.height.toDouble();
         setState(() {
-          _x1 = flatCorners[0].clamp(0.0, 1.0);
-          _y1 = flatCorners[1].clamp(0.0, 1.0);
-          _x2 = flatCorners[2].clamp(0.0, 1.0);
-          _y2 = flatCorners[3].clamp(0.0, 1.0);
-          _x3 = flatCorners[4].clamp(0.0, 1.0);
-          _y3 = flatCorners[5].clamp(0.0, 1.0);
-          _x4 = flatCorners[6].clamp(0.0, 1.0);
-          _y4 = flatCorners[7].clamp(0.0, 1.0);
+          _x1 = (corners[0].dx / w).clamp(0.0, 1.0);
+          _y1 = (corners[0].dy / h).clamp(0.0, 1.0);
+          _x2 = (corners[1].dx / w).clamp(0.0, 1.0);
+          _y2 = (corners[1].dy / h).clamp(0.0, 1.0);
+          _x3 = (corners[2].dx / w).clamp(0.0, 1.0);
+          _y3 = (corners[2].dy / h).clamp(0.0, 1.0);
+          _x4 = (corners[3].dx / w).clamp(0.0, 1.0);
+          _y4 = (corners[3].dy / h).clamp(0.0, 1.0);
         });
       } else {
         _resetPerspective();
