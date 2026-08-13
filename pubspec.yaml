@@ -11,21 +11,21 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # واجهة المستخدم الأساسية
+  # واجهة المستخدم
   cupertino_icons: ^1.0.6
 
-  # مكتبات معالجة الصور وجلبها من المعرض/الكاميرا
+  # معالجة الصور
   image: ^4.1.7
   image_picker: ^1.1.2
   
-  # مكتبات إنشاء وطباعة ملفات الـ PDF
+  # الطباعة والـ PDF
   pdf: ^3.11.1
   printing: ^5.12.0
 
-  # مكتبة التحويل الهندسي الدقيق للقص (لتسطيح البطاقات المائلة)
+  # محرك القص الهندسي (لتسطيح الصورة)
   opencv_dart: ^1.0.0
 
-  # الذكاء الاصطناعي المدمج (لاكتشاف زوايا المستند بذكاء بشري)
+  # مكتبة الذكاء الاصطناعي لقراءة الموديل
   tflite_flutter: ^0.10.4
 
 dev_dependencies:
@@ -36,6 +36,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # مسار ملفات الذكاء الاصطناعي
+  # مسار ملف الذكاء الاصطناعي الذي قمت برفعه
   assets:
-    - assets/models/document_scanner.tflite
+    - assets/border_detect_224.tflite
