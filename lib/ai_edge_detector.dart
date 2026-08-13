@@ -5,36 +5,37 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
+/// كاشف زوايا المستند باستخدام موديل border_detect_224.tflite
+/// (موديل CenterNet keypoints — 4 نقاط، كل نقطة إحداثيتين y,x بمقياس 0-1)
 class AIDocumentDetector {
   static Interpreter? _interpreter;
-  static List<int>? _inputShape;
-  static List<int>? _outputShape;
-  static bool _isMaskOutput = false;
+  static int _inputH = 224;
+  static int _inputW = 224;
+
+  // عدد مخرجات هذا الموديل بالتحديد (مؤكد من فحص الملف): 6
+  static const int _outputCount = 6;
 
   static Future<void> _ensureLoaded() async {
     if (_interpreter != null) return;
 
-    _interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
+    final interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
+    _interpreter = interpreter;
 
-    final inputTensor = _interpreter!.getInputTensor(0);
-    final outputTensor = _interpreter!.getOutputTensor(0);
-
-    _inputShape = inputTensor.shape;
-    _outputShape = outputTensor.shape;
-
-    final outputElements = _outputShape!.fold<int>(1, (a, b) => a * b);
-    // لو الموديل بيرجع 8 أرقام فقط => يعني 4 زوايا (x,y) مباشرة
-    // غير هيك => نعتبره "قناع" (mask) وناخذ الزوايا القصوى منه
-    _isMaskOutput = outputElements != 8;
+    final inputTensor = interpreter.getInputTensor(0);
+    _inputH = inputTensor.shape[1];
+    _inputW = inputTensor.shape[2];
 
     debugPrint('==================================================');
     debugPrint('✅ تم تحميل موديل كشف الحواف');
-    debugPrint('➡️ Input shape: $_inputShape');
-    debugPrint('⬅️ Output shape: $_outputShape (${_isMaskOutput ? "mask mode" : "corners mode"})');
+    debugPrint('➡️ Input shape: ${inputTensor.shape}');
+    for (int i = 0; i < _outputCount; i++) {
+      final t = interpreter.getOutputTensor(i);
+      debugPrint('⬅️ Output[$i]: ${t.shape}');
+    }
     debugPrint('==================================================');
   }
 
-  /// دالة تشخيصية (اختيارية) لفحص شكل الموديل من الـ console
+  /// دالة تشخيصية اختيارية لفحص شكل الموديل من الـ console عند إقلاع التطبيق
   static Future<void> inspectModel() async {
     try {
       await _ensureLoaded();
@@ -45,100 +46,122 @@ class AIDocumentDetector {
 
   /// الدالة الأساسية: تاخذ بايتات صورة، وترجع 4 زوايا بترتيب
   /// [أعلى-يسار, أعلى-يمين, أسفل-يمين, أسفل-يسار] بمقاييس بكسل الصورة الأصلية.
-  /// ترجع null لو فشل الكشف.
+  /// ترجع null لو فشل الكشف أو حصل خطأ.
   static Future<List<Offset>?> detect(Uint8List imageBytes) async {
     try {
       await _ensureLoaded();
       final interpreter = _interpreter;
-      final inputShape = _inputShape;
-      if (interpreter == null || inputShape == null || inputShape.length < 3) {
-        return null;
-      }
+      if (interpreter == null) return null;
 
       final original = img.decodeImage(imageBytes);
       if (original == null) return null;
 
-      final inH = inputShape[1];
-      final inW = inputShape[2];
-
-      final resized = img.copyResize(original, width: inW, height: inH);
+      final resized = img.copyResize(original, width: _inputW, height: _inputH);
 
       final input = [
         List.generate(
-          inH,
-          (y) => List.generate(inW, (x) {
+          _inputH,
+          (y) => List.generate(_inputW, (x) {
             final p = resized.getPixel(x, y);
             return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
           }),
         ),
       ];
 
-      if (!_isMaskOutput) {
-        final output = [List.filled(8, 0.0)];
-        interpreter.run(input, output);
-        final flat = output[0];
-
-        return [
-          Offset(flat[0] * original.width, flat[1] * original.height),
-          Offset(flat[2] * original.width, flat[3] * original.height),
-          Offset(flat[4] * original.width, flat[5] * original.height),
-          Offset(flat[6] * original.width, flat[7] * original.height),
-        ];
-      } else {
-        final outShape = _outputShape!;
-        final outH = outShape.length >= 3 ? outShape[1] : inH;
-        final outW = outShape.length >= 3 ? outShape[2] : inW;
-
-        final output = [
-          List.generate(outH, (_) => List.generate(outW, (_) => [0.0])),
-        ];
-        interpreter.run(input, output);
-
-        return _cornersFromMask(output[0], outW, outH, original.width, original.height);
+      // تجهيز مخازن استقبال لكل المخرجات الستة حسب شكل كل واحد منها فعليًا
+      final outputs = <int, Object>{};
+      for (int i = 0; i < _outputCount; i++) {
+        final shape = interpreter.getOutputTensor(i).shape;
+        outputs[i] = _buildNestedZeros(shape);
       }
+
+      interpreter.runForMultipleInputs([input], outputs);
+
+      // إيجاد مخرج الزوايا: الشكل الوحيد المميز بين كل المخرجات هو [.., .., 4, 2]
+      for (int i = 0; i < _outputCount; i++) {
+        final shape = interpreter.getOutputTensor(i).shape;
+        if (shape.length == 4 && shape[2] == 4 && shape[3] == 2) {
+          return _extractCorners(outputs[i], original.width, original.height);
+        }
+      }
+
+      debugPrint('⚠️ لم يتم العثور على مخرج الزوايا بالشكل المتوقع [.., .., 4, 2]');
+      return null;
     } catch (e) {
       debugPrint('❌ خطأ أثناء تشغيل كشف الحواف: $e');
       return null;
     }
   }
 
-  /// يستخرج 4 زوايا من قناع (mask) عن طريق إيجاد النقاط القصوى
-  /// بأربع اتجاهات هندسية (x+y, x-y).
-  static List<Offset>? _cornersFromMask(
-    List<dynamic> mask, int maskW, int maskH, int origW, int origH,
-  ) {
-    const threshold = 0.5;
+  static Object _buildNestedZeros(List<int> shape) {
+    if (shape.isEmpty) return 0.0;
+    if (shape.length == 1) return List.filled(shape[0], 0.0);
+    return List.generate(shape[0], (_) => _buildNestedZeros(shape.sublist(1)));
+  }
 
-    double minSum = double.infinity, maxSum = -double.infinity;
-    double maxDiff = -double.infinity, minDiff = double.infinity;
+  /// يقرأ مصفوفة الـ keypoints (شكلها [1,1,4,2]) ويرجع 4 نقاط
+  /// مرتبة هندسيًا: أعلى-يسار, أعلى-يمين, أسفل-يمين, أسفل-يسار.
+  static List<Offset>? _extractCorners(dynamic raw, int origW, int origH) {
+    // ننزل بالمصفوفة حتى نوصل لآخر بعدين (4 نقاط × 2 إحداثية)
+    dynamic level = raw;
+    while (level is List &&
+        level.isNotEmpty &&
+        level[0] is List &&
+        (level[0] as List).isNotEmpty &&
+        (level[0] as List)[0] is List) {
+      level = level[0];
+    }
+    if (level is! List || level.length != 4) return null;
 
-    int? tlX, tlY, brX, brY, trX, trY, blX, blY;
+    final points = <Offset>[];
+    for (final kp in level) {
+      if (kp is! List || kp.length < 2) return null;
 
-    for (int y = 0; y < maskH; y++) {
-      for (int x = 0; x < maskW; x++) {
-        final v = (mask[y][x][0] as num).toDouble();
-        if (v < threshold) continue;
+      // ترتيب الإحداثيات في TensorFlow Object Detection API القياسي هو (y, x)
+      double y = (kp[0] as num).toDouble();
+      double x = (kp[1] as num).toDouble();
 
-        final sum = (x + y).toDouble();
-        final diff = (x - y).toDouble();
+      if (x < 0) x = 0;
+      if (x > 1) x = 1;
+      if (y < 0) y = 0;
+      if (y > 1) y = 1;
 
-        if (sum < minSum) { minSum = sum; tlX = x; tlY = y; }
-        if (sum > maxSum) { maxSum = sum; brX = x; brY = y; }
-        if (diff > maxDiff) { maxDiff = diff; trX = x; trY = y; }
-        if (diff < minDiff) { minDiff = diff; blX = x; blY = y; }
+      points.add(Offset(x * origW, y * origH));
+    }
+
+    // ترتيب هندسي مستقل عن ترتيب الموديل الداخلي:
+    // أعلى-يسار (أصغر x+y) / أسفل-يمين (أكبر x+y)
+    // أعلى-يمين (أكبر x-y) / أسفل-يسار (أصغر x-y)
+    Offset topLeft = points[0];
+    Offset topRight = points[0];
+    Offset bottomRight = points[0];
+    Offset bottomLeft = points[0];
+    double minSum = double.infinity;
+    double maxSum = -double.infinity;
+    double minDiff = double.infinity;
+    double maxDiff = -double.infinity;
+
+    for (final p in points) {
+      final sum = p.dx + p.dy;
+      final diff = p.dx - p.dy;
+      if (sum < minSum) {
+        minSum = sum;
+        topLeft = p;
+      }
+      if (sum > maxSum) {
+        maxSum = sum;
+        bottomRight = p;
+      }
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        topRight = p;
+      }
+      if (diff < minDiff) {
+        minDiff = diff;
+        bottomLeft = p;
       }
     }
 
-    if (tlX == null || trX == null || brX == null || blX == null) return null;
-
-    final sx = origW / maskW;
-    final sy = origH / maskH;
-
-    return [
-      Offset(tlX * sx, tlY! * sy),
-      Offset(trX * sx, trY! * sy),
-      Offset(brX * sx, brY! * sy),
-      Offset(blX * sx, blY! * sy),
-    ];
+    return [topLeft, topRight, bottomRight, bottomLeft];
   }
 }
