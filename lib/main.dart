@@ -9,7 +9,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-import 'edge_detector.dart';
+import 'edge_detector.dart'; // الذكاء المؤقت (OpenCV)
+import 'crop_engine.dart';   // محرك التسطيح والقص
+import 'ai_edge_detector.dart'; // <--- استيراد ملف استكشاف الذكاء الاصطناعي الجديد
 
 /// ===============================================================
 /// ISOLATES (BACKGROUND TASKS)
@@ -42,17 +44,15 @@ Map<String, dynamic> processPreviewIsolate(Map<String, dynamic> args) {
 
 img.Image cropFinalIsolate(Map<String, dynamic> args) {
   final img.Image source = args['image'];
-  var cropped = ManualCrop.cropPerspective(
+  
+  var cropped = CropEngine.cropPerspective(
     source,
-    args['x1'],
-    args['y1'],
-    args['x2'],
-    args['y2'],
-    args['x3'],
-    args['y3'],
-    args['x4'],
-    args['y4'],
+    args['x1'], args['y1'],
+    args['x2'], args['y2'],
+    args['x3'], args['y3'],
+    args['x4'], args['y4'],
   );
+  
   return ImageEnhancer.apply(cropped, args['mode'], args['intensity']);
 }
 
@@ -174,51 +174,16 @@ class ImageEnhancer {
   }
 }
 
-/// A simpler perspective warp based on image library's capabilities.
-/// Note: Ensure you have `perspective_warp.dart` if you are using a custom 
-/// implementation, or replace this with image's built in functions if available.
-class ManualCrop {
-  static img.Image cropPerspective(
-    img.Image source,
-    double x1, double y1,
-    double x2, double y2,
-    double x3, double y3,
-    double x4, double y4,
-  ) {
-    if (!ImageUtils.isValid(source)) return img.Image.from(source);
-
-    // If you have a custom PerspectiveWarp class, use it here.
-    // For now, this is a placeholder that does a simple crop bounding box
-    // since standard `image` package doesn't have a direct 4-point warp.
-    // Replace the logic inside here with your PerspectiveWarp.warp if needed.
-    
-    final w = source.width.toDouble();
-    final h = source.height.toDouble();
-
-    int minX = (math.min(math.min(x1, x2), math.min(x3, x4)) * w).toInt();
-    int minY = (math.min(math.min(y1, y2), math.min(y3, y4)) * h).toInt();
-    int maxX = (math.max(math.max(x1, x2), math.max(x3, x4)) * w).toInt();
-    int maxY = (math.max(math.max(y1, y2), math.max(y3, y4)) * h).toInt();
-
-    minX = minX.clamp(0, source.width);
-    minY = minY.clamp(0, source.height);
-    maxX = maxX.clamp(0, source.width);
-    maxY = maxY.clamp(0, source.height);
-
-    try {
-      return img.copyCrop(source, x: minX, y: minY, width: maxX - minX, height: maxY - minY);
-    } catch (e) {
-      return img.Image.from(source);
-    }
-  }
-}
-
 /// ===============================================================
 /// MAIN ENTRY POINT & APP THEME
 /// ===============================================================
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 🚀 تشغيل كود الفحص عند فتح التطبيق لكشف سر موديل ClearScanner
+  await AIDocumentDetector.inspectModel();
+  
   runApp(const MosulScannerApp());
 }
 
@@ -688,7 +653,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               boxShadow: [
-                                BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4)),
+                                BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 12, offset: const Offset(0, 4)),
                               ],
                             ),
                             child: Stack(
@@ -774,9 +739,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: color.withOpacity(0.3)),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
           ),
           child: Row(
             children: [
@@ -796,9 +761,9 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          backgroundColor: clr.withOpacity(0.08),
+          backgroundColor: clr.withValues(alpha: 0.08),
           foregroundColor: clr,
-          side: BorderSide(color: clr.withOpacity(0.2)),
+          side: BorderSide(color: clr.withValues(alpha: 0.2)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
           elevation: 0,
         ),
@@ -807,7 +772,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           children: [
             Text(title, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: clr)),
             const SizedBox(height: 2),
-            Text(subtitle, style: TextStyle(fontSize: 8, color: clr.withOpacity(0.8))),
+            Text(subtitle, style: TextStyle(fontSize: 8, color: clr.withValues(alpha: 0.8))),
           ],
         ),
       ),
@@ -866,7 +831,7 @@ class _CropScreenState extends State<CropScreen> {
   double _x4 = 0.05, _y4 = 0.95;
 
   EnhanceMode _filter = EnhanceMode.magic;
-  double _filterIntensity = 0.8;
+  final double _filterIntensity = 0.8;
   
   bool _isProcessing = true;
   bool _isSaving = false;
@@ -899,7 +864,6 @@ class _CropScreenState extends State<CropScreen> {
         _isProcessing = false;
       });
 
-      // تشغيل الاكتشاف التلقائي فوراً فقط إذا كانت النقاط في وضعها الافتراضي 
       if (_x1 == 0.05 && _y1 == 0.05 && _x3 == 0.95 && _y3 == 0.95) {
         _runAutoDetect();
       }
@@ -1128,7 +1092,7 @@ class _CropScreenState extends State<CropScreen> {
         width: 75,
         margin: const EdgeInsets.symmetric(horizontal: 4),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF0284C7).withOpacity(0.2) : const Color(0xFF1E293B),
+          color: selected ? const Color(0xFF0284C7).withValues(alpha: 0.2) : const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? const Color(0xFF0284C7) : Colors.white12,
