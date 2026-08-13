@@ -26,7 +26,7 @@ dependencies:
   opencv_dart: ^1.0.0
 
   # مكتبة الذكاء الاصطناعي لقراءة الموديل
-  tflite_flutter: ^0.10.4
+  tflite_flutter: ^0.11.0
 
 dev_dependencies:
   flutter_test:
