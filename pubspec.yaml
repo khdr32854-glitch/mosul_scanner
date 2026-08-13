@@ -25,7 +25,7 @@ dependencies:
   # محرك القص الهندسي (لتسطيح الصورة)
   opencv_dart: ^1.0.0
 
-  # مكتبة الذكاء الاصطناعي لقراءة الموديل
+  # مكتبة الذكاء الاصطناعي لقراءة الموديل (تم التحديث للإصدار المتوافق)
   tflite_flutter: ^0.11.0
 
 dev_dependencies:
@@ -36,6 +36,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # مسار ملف الذكاء الاصطناعي الذي قمت برفعه
+  # مسار ملف الذكاء الاصطناعي (بدون مسافات وبشرطة سفلية صحيحة)
   assets:
     - assets/border_detect_224.tflite
