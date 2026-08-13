@@ -1,325 +1,77 @@
 import 'dart:math' as math;
-
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image/image.dart' as img;
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-/// ===============================================================
-/// MOSUL SCANNER - CROP ENGINE
-/// ===============================================================
-///
-/// المسؤول عن:
-/// 1. تشغيل Google ML Kit Document Scanner
-/// 2. استلام مسارات الصور الناتجة
-/// 3. معالجة الصور
-/// 4. القص اليدوي
-/// 5. تحسين الصورة
-///
-/// Google ML Kit Document Scanner 0.5.0
-/// ===============================================================
-
-/// ===============================================================
-/// 1. GOOGLE DOCUMENT SCANNER
-/// ===============================================================
-
-class GoogleScanner {
-  static Future<List<String>?> scan({
-    int pageLimit = 10,
-    bool allowGallery = false,
-  }) async {
-    final options = DocumentScannerOptions(
-      documentFormats: const {
-        DocumentFormat.jpeg,
-      },
-      mode: ScannerMode.full,
-      pageLimit: pageLimit,
-      isGalleryImport: allowGallery,
-    );
-
-    final scanner = DocumentScanner(
-      options: options,
-    );
-
-    try {
-      debugPrint('MOSUL SCANNER: Opening Google Document Scanner');
-
-      final result = await scanner.scanDocument();
-
-      final images = result.images;
-
-      debugPrint(
-        'MOSUL SCANNER: Google returned '
-        '${images?.length ?? 0} image(s)',
-      );
-
-      return images;
-    } catch (e, stackTrace) {
-      debugPrint('==========================================');
-      debugPrint('GOOGLE DOCUMENT SCANNER ERROR');
-      debugPrint('$e');
-      debugPrint('$stackTrace');
-      debugPrint('==========================================');
-
-      return null;
-    } finally {
-      try {
-        await scanner.close();
-      } catch (e) {
-        debugPrint('Google Scanner close error: $e');
-      }
-    }
-  }
-}
-
-/// ===============================================================
-/// 2. IMAGE UTILITIES
-/// ===============================================================
-
-class ImageUtils {
-  static img.Image? decodeBytes(Uint8List bytes) {
-    try {
-      return img.decodeImage(bytes);
-    } catch (e) {
-      debugPrint('Image decode error: $e');
-      return null;
-    }
-  }
-
-  static Uint8List encodeJpg(
-    img.Image image, {
-    int quality = 92,
-  }) {
-    try {
-      return Uint8List.fromList(
-        img.encodeJpg(
-          image,
-          quality: quality,
-        ),
-      );
-    } catch (e) {
-      debugPrint('Image encode error: $e');
-      return Uint8List(0);
-    }
-  }
-
-  static bool isValid(img.Image? image) {
-    return image != null &&
-        image.width >= 10 &&
-        image.height >= 10;
-  }
-}
-
-/// ===============================================================
-/// 3. CROP RESULT
-/// ===============================================================
-
-class CropResult {
-  final img.Image image;
-  final bool changed;
-  final double confidence;
-
-  const CropResult({
-    required this.image,
-    required this.changed,
-    required this.confidence,
-  });
-}
-
-/// ===============================================================
-/// 4. IMAGE ENHANCER
-/// ===============================================================
-
-enum EnhanceMode {
-  none,
-  soft,
-  bw,
-}
-
-class ImageEnhancer {
-  static img.Image apply(
-    img.Image source,
-    EnhanceMode mode,
-  ) {
-    final image = img.Image.from(source);
-
-    switch (mode) {
-      case EnhanceMode.none:
-        return image;
-
-      case EnhanceMode.soft:
-        try {
-          return img.adjustColor(
-            image,
-            contrast: 1.12,
-            brightness: 1.04,
-            saturation: 1.03,
-          );
-        } catch (e) {
-          debugPrint('Soft enhancement error: $e');
-          return image;
-        }
-
-      case EnhanceMode.bw:
-        try {
-          final gray = img.grayscale(image);
-
-          return img.adjustColor(
-            gray,
-            contrast: 1.22,
-            brightness: 1.03,
-          );
-        } catch (e) {
-          debugPrint('BW enhancement error: $e');
-          return image;
-        }
-    }
-  }
-}
-
-/// ===============================================================
-/// 5. MANUAL CROP
-/// ===============================================================
-///
-/// الإحداثيات normalized:
-/// 0.0 = بداية الصورة
-/// 1.0 = نهاية الصورة
-///
-/// ترتيب النقاط:
-/// 1 = أعلى يسار
-/// 2 = أعلى يمين
-/// 3 = أسفل يمين
-/// 4 = أسفل يسار
-///
-/// ملاحظة:
-/// هذه النسخة تنفذ قص المستطيل المحيط بالنقاط.
-/// ===============================================================
-
-class ManualCrop {
+class CropEngine {
+  /// محرك القص الاحترافي (Perspective Warp)
+  /// يعتمد على OpenCV لضبط منظور الصورة (جعل البطاقة المائلة مستطيلة ومسطحة تماماً)
   static img.Image cropPerspective(
     img.Image source,
-    double x1,
-    double y1,
-    double x2,
-    double y2,
-    double x3,
-    double y3,
-    double x4,
-    double y4,
+    double x1, double y1, // أعلى اليسار
+    double x2, double y2, // أعلى اليمين
+    double x3, double y3, // أسفل اليمين
+    double x4, double y4, // أسفل اليسار
   ) {
-    if (!ImageUtils.isValid(source)) {
-      return img.Image.from(source);
+    try {
+      final w = source.width.toDouble();
+      final h = source.height.toDouble();
+
+      // 1. تحويل النسب (0.0 إلى 1.0) إلى بكسلات حقيقية بناءً على أبعاد الصورة
+      final pt1 = cv.Point2f(x1 * w, y1 * h);
+      final pt2 = cv.Point2f(x2 * w, y2 * h);
+      final pt3 = cv.Point2f(x3 * w, y3 * h);
+      final pt4 = cv.Point2f(x4 * w, y4 * h);
+
+      // 2. حساب الأبعاد الدقيقة للمستند بعد القص باستخدام نظرية فيثاغورس
+      // حساب العرض (أطول مسافة أفقية بين النقاط)
+      final widthA = math.sqrt(math.pow(pt3.x - pt4.x, 2) + math.pow(pt3.y - pt4.y, 2));
+      final widthB = math.sqrt(math.pow(pt2.x - pt1.x, 2) + math.pow(pt2.y - pt1.y, 2));
+      final maxWidth = math.max(widthA, widthB).toInt();
+
+      // حساب الارتفاع (أطول مسافة عمودية بين النقاط)
+      final heightA = math.sqrt(math.pow(pt2.x - pt3.x, 2) + math.pow(pt2.y - pt3.y, 2));
+      final heightB = math.sqrt(math.pow(pt1.x - pt4.x, 2) + math.pow(pt1.y - pt4.y, 2));
+      final maxHeight = math.max(heightA, heightB).toInt();
+
+      // تجنب أخطاء الأبعاد الصفرية في حال كان التحديد خاطئاً
+      if (maxWidth <= 0 || maxHeight <= 0) return source;
+
+      // 3. تحويل صورة Dart (img.Image) إلى مصفوفة OpenCV (Mat)
+      // يتم ذلك عبر ضغط الصورة في الذاكرة لتسهيل نقلها بسرعة فائقة للمحرك
+      final srcBytes = Uint8List.fromList(img.encodeJpg(source, quality: 100));
+      final srcMat = cv.imdecode(srcBytes, cv.IMREAD_COLOR);
+
+      if (srcMat.isEmpty) return source;
+
+      // 4. تجهيز مصفوفات النقاط (المصدر والهدف)
+      final srcPts = cv.VecPoint2f.fromList([pt1, pt2, pt3, pt4]);
+      
+      final dstPts = cv.VecPoint2f.fromList([
+        cv.Point2f(0, 0),                                               // أعلى اليسار
+        cv.Point2f(maxWidth.toDouble() - 1, 0),                         // أعلى اليمين
+        cv.Point2f(maxWidth.toDouble() - 1, maxHeight.toDouble() - 1),  // أسفل اليمين
+        cv.Point2f(0, maxHeight.toDouble() - 1),                        // أسفل اليسار
+      ]);
+
+      // 5. حساب مصفوفة التحويل الهندسي (Perspective Transform)
+      final matrix = cv.getPerspectiveTransform(srcPts, dstPts);
+
+      // 6. تنفيذ عملية التسطيح والقص (Warp Perspective)
+      final warpedMat = cv.warpPerspective(srcMat, matrix, (maxWidth, maxHeight));
+
+      // 7. إرجاع النتيجة إلى صيغة Dart الأساسية لاستخدامها في باقي التطبيق
+      final encodeResult = cv.imencode('.jpg', warpedMat);
+      final outBytes = encodeResult.$2; 
+      
+      final decoded = img.decodeJpg(outBytes);
+
+      return decoded ?? source;
+    } catch (e) {
+      debugPrint('CropEngine Error: $e');
+      // إرجاع الصورة الأصلية لحماية التطبيق من الانهيار في حال حدوث خطأ برمجي
+      return source;
     }
-
-    final w = source.width.toDouble();
-    final h = source.height.toDouble();
-
-    final valuesX = <double>[
-      x1,
-      x2,
-      x3,
-      x4,
-    ];
-
-    final valuesY = <double>[
-      y1,
-      y2,
-      y3,
-      y4,
-    ];
-
-    final minNormalizedX =
-        valuesX.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedX =
-        valuesX.reduce(math.max).clamp(0.0, 1.0);
-
-    final minNormalizedY =
-        valuesY.reduce(math.min).clamp(0.0, 1.0);
-
-    final maxNormalizedY =
-        valuesY.reduce(math.max).clamp(0.0, 1.0);
-
-    int minX = (minNormalizedX * w).round();
-    int maxX = (maxNormalizedX * w).round();
-
-    int minY = (minNormalizedY * h).round();
-    int maxY = (maxNormalizedY * h).round();
-
-    minX = minX.clamp(0, source.width - 1);
-    minY = minY.clamp(0, source.height - 1);
-
-    maxX = maxX.clamp(minX + 1, source.width);
-    maxY = maxY.clamp(minY + 1, source.height);
-
-    final cropWidth =
-        math.max(10, maxX - minX);
-
-    final cropHeight =
-        math.max(10, maxY - minY);
-
-    return img.copyCrop(
-      source,
-      x: minX,
-      y: minY,
-      width: cropWidth,
-      height: cropHeight,
-    );
-  }
-}
-
-/// ===============================================================
-/// 6. SMART CROP FALLBACK
-/// ===============================================================
-
-class SmartCrop {
-  static CropResult detect(
-    img.Image source,
-  ) {
-    if (!ImageUtils.isValid(source)) {
-      return CropResult(
-        image: img.Image.from(source),
-        changed: false,
-        confidence: 0.0,
-      );
-    }
-
-    const margin = 0.01;
-
-    final cropped = ManualCrop.cropPerspective(
-      source,
-      margin,
-      margin,
-      1.0 - margin,
-      margin,
-      1.0 - margin,
-      1.0 - margin,
-      margin,
-      1.0 - margin,
-    );
-
-    return CropResult(
-      image: cropped,
-      changed: true,
-      confidence: 0.85,
-    );
-  }
-
-  static List<double>? detectCorners(
-    img.Image source,
-  ) {
-    if (!ImageUtils.isValid(source)) {
-      return null;
-    }
-
-    return const [
-      0.05,
-      0.05,
-      0.95,
-      0.05,
-      0.95,
-      0.95,
-      0.05,
-      0.95,
-    ];
   }
 }
