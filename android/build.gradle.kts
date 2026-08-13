@@ -28,13 +28,22 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-/*
- * ============================================================
- * توحيد Java + Kotlin على JVM 17
- * ============================================================
- */
-
 allprojects {
+    tasks.withType<JavaCompile>().configureEach {
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
+    }
+
+    tasks.withType<KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+}
+
+tasks.register<Delete>("clean") {
+    delete(rootProject.layout.buildDirectory)
+}allprojects {
 
     // Java 17
     tasks.withType<JavaCompile>().configureEach {
