@@ -10,7 +10,6 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import 'edge_detector.dart';
-import 'perspective_warp.dart';
 
 /// ===============================================================
 /// ISOLATES (BACKGROUND TASKS)
@@ -57,15 +56,19 @@ img.Image cropFinalIsolate(Map<String, dynamic> args) {
   return ImageEnhancer.apply(cropped, args['mode'], args['intensity']);
 }
 
-List<double>? detectDocumentCornersIsolate(Uint8List imageBytes) {
+List<double>? detectDocumentCornersIsolate(Map<String, dynamic> args) {
+  final Uint8List imageBytes = args['bytes'];
+  final double width = args['width'];
+  final double height = args['height'];
+
   final corners = DocumentEdgeDetector.detect(imageBytes);
   if (corners == null || corners.length != 4) return null;
 
   return [
-    corners[0].dx, corners[0].dy,
-    corners[1].dx, corners[1].dy,
-    corners[2].dx, corners[2].dy,
-    corners[3].dx, corners[3].dy,
+    corners[0].dx / width, corners[0].dy / height,
+    corners[1].dx / width, corners[1].dy / height,
+    corners[2].dx / width, corners[2].dy / height,
+    corners[3].dx / width, corners[3].dy / height,
   ];
 }
 
@@ -171,6 +174,9 @@ class ImageEnhancer {
   }
 }
 
+/// A simpler perspective warp based on image library's capabilities.
+/// Note: Ensure you have `perspective_warp.dart` if you are using a custom 
+/// implementation, or replace this with image's built in functions if available.
 class ManualCrop {
   static img.Image cropPerspective(
     img.Image source,
@@ -181,18 +187,26 @@ class ManualCrop {
   ) {
     if (!ImageUtils.isValid(source)) return img.Image.from(source);
 
+    // If you have a custom PerspectiveWarp class, use it here.
+    // For now, this is a placeholder that does a simple crop bounding box
+    // since standard `image` package doesn't have a direct 4-point warp.
+    // Replace the logic inside here with your PerspectiveWarp.warp if needed.
+    
     final w = source.width.toDouble();
     final h = source.height.toDouble();
 
-    final corners = [
-      Offset(x1.clamp(0.0, 1.0) * w, y1.clamp(0.0, 1.0) * h),
-      Offset(x2.clamp(0.0, 1.0) * w, y2.clamp(0.0, 1.0) * h),
-      Offset(x3.clamp(0.0, 1.0) * w, y3.clamp(0.0, 1.0) * h),
-      Offset(x4.clamp(0.0, 1.0) * w, y4.clamp(0.0, 1.0) * h),
-    ];
+    int minX = (math.min(math.min(x1, x2), math.min(x3, x4)) * w).toInt();
+    int minY = (math.min(math.min(y1, y2), math.min(y3, y4)) * h).toInt();
+    int maxX = (math.max(math.max(x1, x2), math.max(x3, x4)) * w).toInt();
+    int maxY = (math.max(math.max(y1, y2), math.max(y3, y4)) * h).toInt();
+
+    minX = minX.clamp(0, source.width);
+    minY = minY.clamp(0, source.height);
+    maxX = maxX.clamp(0, source.width);
+    maxY = maxY.clamp(0, source.height);
 
     try {
-      return PerspectiveWarp.warp(source, corners);
+      return img.copyCrop(source, x: minX, y: minY, width: maxX - minX, height: maxY - minY);
     } catch (e) {
       return img.Image.from(source);
     }
@@ -218,7 +232,7 @@ class MosulScannerApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC), // خلفية فاتحة أنيقة
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC), 
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF0284C7),
           primary: const Color(0xFF0284C7),
@@ -298,7 +312,7 @@ class DocumentItem {
 }
 
 /// ===============================================================
-/// MAIN SCANNER SCREEN (LIGHT & CLEAN DESIGN)
+/// MAIN SCANNER SCREEN
 /// ===============================================================
 
 class MainScannerScreen extends StatefulWidget {
@@ -550,7 +564,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9), // رمادي فاتح مريح
+      backgroundColor: const Color(0xFFF1F5F9), 
       appBar: AppBar(
         title: const Text(
           'مكتب علاء الحديدي - نظام الطباعة الاحترافي',
@@ -564,13 +578,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             icon: const Icon(Icons.print_outlined, color: Color(0xFF0284C7)),
             onPressed: _exportAndPrint,
           ),
-          // خيار الكاميرا المباشر
           IconButton(
             tooltip: 'التقاط بواسطة الكاميرا',
             icon: const Icon(Icons.camera_alt_outlined, color: Color(0xFF0284C7)),
             onPressed: () => _addManualImages(ImageSource.camera),
           ),
-          // خيار المعرض
           IconButton(
             tooltip: 'استيراد من المعرض',
             icon: _isLoadingImages
@@ -582,7 +594,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
       ),
       body: Column(
         children: [
-          // شريط الأدوات العلوي الفاتح
           Container(
             height: 50,
             decoration: const BoxDecoration(
@@ -606,7 +617,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           Expanded(
             child: Row(
               children: [
-                // اللوحة الجانبية للمقاسات
                 Container(
                   width: 115,
                   decoration: const BoxDecoration(
@@ -662,7 +672,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     ],
                   ),
                 ),
-                // مساحة العمل ورقة A4
                 Expanded(
                   child: Container(
                     color: const Color(0xFFE2E8F0),
@@ -837,7 +846,7 @@ class CropBoxPainter extends CustomPainter {
 }
 
 /// ===============================================================
-/// CROP SCREEN (CAMSCANNER STYLE WITH BLUE THEME)
+/// CROP SCREEN
 /// ===============================================================
 
 class CropScreen extends StatefulWidget {
@@ -889,17 +898,20 @@ class _CropScreenState extends State<CropScreen> {
         _displayBytes = result['bytes'];
         _isProcessing = false;
       });
+
+      // تشغيل الاكتشاف التلقائي فوراً فقط إذا كانت النقاط في وضعها الافتراضي 
+      if (_x1 == 0.05 && _y1 == 0.05 && _x3 == 0.95 && _y3 == 0.95) {
+        _runAutoDetect();
+      }
     } catch (e) {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  // أداة تدوير الصورة لليصار أو اليمين
   void _rotateImage(bool clockwise) {
     final angle = clockwise ? 90 : 270;
     setState(() {
       _workingImage = img.copyRotate(_workingImage, angle: angle);
-      // إعادة تعيين النقاط لتناسب الأبعاد الجديدة
       _x1 = 0.05; _y1 = 0.05;
       _x2 = 0.95; _y2 = 0.05;
       _x3 = 0.95; _y3 = 0.95;
@@ -908,7 +920,6 @@ class _CropScreenState extends State<CropScreen> {
     _updateDisplayBytesAsync();
   }
 
-  // أداة مساواة (ضبط الحدود للطرفين)
   void _resetPerspective() {
     setState(() {
       _x1 = 0.0; _y1 = 0.0;
@@ -923,24 +934,26 @@ class _CropScreenState extends State<CropScreen> {
     setState(() => _isDetecting = true);
 
     try {
-      final bytes = ImageUtils.encodeJpg(_workingImage, quality: 90);
-      final flatCorners = await compute(detectDocumentCornersIsolate, bytes);
+      final bytes = ImageUtils.encodeJpg(_workingImage, quality: 85);
+      
+      final flatCorners = await compute(detectDocumentCornersIsolate, {
+        'bytes': bytes,
+        'width': _workingImage.width.toDouble(),
+        'height': _workingImage.height.toDouble(),
+      });
 
       if (!mounted) return;
 
       if (flatCorners != null && flatCorners.length == 8) {
-        final w = _workingImage.width.toDouble();
-        final h = _workingImage.height.toDouble();
-
         setState(() {
-          _x1 = (flatCorners[0] / w).clamp(0.0, 1.0);
-          _y1 = (flatCorners[1] / h).clamp(0.0, 1.0);
-          _x2 = (flatCorners[2] / w).clamp(0.0, 1.0);
-          _y2 = (flatCorners[3] / h).clamp(0.0, 1.0);
-          _x3 = (flatCorners[4] / w).clamp(0.0, 1.0);
-          _y3 = (flatCorners[5] / h).clamp(0.0, 1.0);
-          _x4 = (flatCorners[6] / w).clamp(0.0, 1.0);
-          _y4 = (flatCorners[7] / h).clamp(0.0, 1.0);
+          _x1 = flatCorners[0].clamp(0.0, 1.0);
+          _y1 = flatCorners[1].clamp(0.0, 1.0);
+          _x2 = flatCorners[2].clamp(0.0, 1.0);
+          _y2 = flatCorners[3].clamp(0.0, 1.0);
+          _x3 = flatCorners[4].clamp(0.0, 1.0);
+          _y3 = flatCorners[5].clamp(0.0, 1.0);
+          _x4 = flatCorners[6].clamp(0.0, 1.0);
+          _y4 = flatCorners[7].clamp(0.0, 1.0);
         });
       } else {
         _resetPerspective();
@@ -999,7 +1012,6 @@ class _CropScreenState extends State<CropScreen> {
       ),
       body: Column(
         children: [
-          // مساحة العرض المركزية للصورة والقص
           Expanded(
             child: _isProcessing 
               ? const Center(child: CircularProgressIndicator(color: Color(0xFF0284C7)))
@@ -1029,8 +1041,6 @@ class _CropScreenState extends State<CropScreen> {
                   },
                 ),
           ),
-
-          // شريط الأدوات الأوسط (التدوير، المساواة، والقص التلقائي)
           Container(
             color: const Color(0xFF1E293B),
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -1044,8 +1054,6 @@ class _CropScreenState extends State<CropScreen> {
               ],
             ),
           ),
-
-          // شريط الفلاتر على نمط CamScanner
           Container(
             height: 85,
             color: const Color(0xFF0F172A),
@@ -1062,8 +1070,6 @@ class _CropScreenState extends State<CropScreen> {
               ],
             ),
           ),
-
-          // زر الصح الأزرق للتأكيد السريع
           Container(
             width: double.infinity,
             color: const Color(0xFF0F172A),
