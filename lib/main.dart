@@ -909,9 +909,7 @@ class _CropScreenState extends State<CropScreen> {
     } catch (e) {
       // لا تستدعِ _resetPerspective() عند حدوث خطأ؛ لأن ذلك
       // ينقل النقاط مباشرة إلى حواف الصورة ويظهر كأنه كشف خاطئ.
-      if (mounted) {
-        _showMessage('تعذر تنفيذ القص التلقائي: $e', error: true);
-      }
+      debugPrint('تعذر تنفيذ القص التلقائي: $e');
     } finally {
       if (mounted) setState(() => _isDetecting = false);
     }
