@@ -900,13 +900,18 @@ class _CropScreenState extends State<CropScreen> {
           _y4 = (corners[3].dy / h).clamp(0.0, 1.0);
         });
       } else {
-        _resetPerspective();
+        // عند ضعف الثقة لا نعيد الإطار إلى زوايا الصورة.
+        // نُبقي الإطار السابق أو الإطار اليدوي الحالي كما هو.
       }
 
       // عرض معلومات التشخيص مباشرة على الشاشة (وضع اختبار مؤقت)
       _showDebugDialog();
     } catch (e) {
-      _resetPerspective();
+      // لا تستدعِ _resetPerspective() عند حدوث خطأ؛ لأن ذلك
+      // ينقل النقاط مباشرة إلى حواف الصورة ويظهر كأنه كشف خاطئ.
+      if (mounted) {
+        _showMessage('تعذر تنفيذ القص التلقائي: $e', error: true);
+      }
     } finally {
       if (mounted) setState(() => _isDetecting = false);
     }
