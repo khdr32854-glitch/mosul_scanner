@@ -284,48 +284,39 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   Future<void> _addManualImages(ImageSource source) async {
     try {
       setState(() => _isLoadingImages = true);
-      List<XFile> files = [];
 
       if (source == ImageSource.camera) {
         final photo = await _picker.pickImage(
           source: ImageSource.camera,
-          imageQuality: 85,
-          maxWidth: 1500,
-          maxHeight: 1500,
+          imageQuality: 95,
         );
-        if (photo != null) files.add(photo);
+        if (photo != null) {
+          final bytes = await File(photo.path).readAsBytes();
+          final decoded = await compute(decodeImageIsolate, bytes);
+          if (decoded != null) {
+            await _processImageWithCropScreen(
+              decoded,
+              isPhoto: _activeTabMode == 'photos',
+            );
+          }
+        }
       } else {
-        final pickedFiles = await _picker.pickMultiImage(
-          imageQuality: 85,
-          maxWidth: 1500,
-          maxHeight: 1500,
-        );
-        files.addAll(pickedFiles);
-      }
-
-      if (files.isEmpty) {
-        if (mounted) setState(() => _isLoadingImages = false);
-        return;
-      }
-
-      if (mounted) setState(() => _isLoadingImages = false);
-
-      for (final file in files) {
-        final bytes = await File(file.path).readAsBytes();
-        final decoded = await compute(decodeImageIsolate, bytes);
-        
-        if (decoded != null && mounted) {
-          await _processImageWithCropScreen(
-            decoded,
-            isPhoto: _activeTabMode == 'photos',
-          );
+        final files = await _picker.pickMultiImage(imageQuality: 95);
+        for (final file in files) {
+          final bytes = await File(file.path).readAsBytes();
+          final decoded = await compute(decodeImageIsolate, bytes);
+          if (decoded != null) {
+            await _processImageWithCropScreen(
+              decoded,
+              isPhoto: _activeTabMode == 'photos',
+            );
+          }
         }
       }
     } catch (e) {
-      if (mounted) {
-        _showMessage('خطأ في جلب الصور: $e', error: true);
-        setState(() => _isLoadingImages = false);
-      }
+      if (mounted) _showMessage('خطأ في جلب الصور: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _isLoadingImages = false);
     }
   }
 
@@ -896,46 +887,56 @@ class _CropScreenState extends State<CropScreen> {
       if (!mounted) return;
 
       if (corners != null && corners.length == 4) {
-        
-        // 1. حساب نقطة المركز للنقاط الأربع
-        double cx = 0, cy = 0;
-        for (var p in corners) {
-          cx += p.dx;
-          cy += p.dy;
-        }
-        cx /= 4;
-        cy /= 4;
-
-        // 2. ترتيب النقاط هندسياً مع عقارب الساعة (TL, TR, BR, BL)
-        corners.sort((a, b) {
-          double angleA = math.atan2(a.dy - cy, a.dx - cx);
-          double angleB = math.atan2(b.dy - cy, b.dx - cx);
-          return angleA.compareTo(angleB);
-        });
-
+        final w = _workingImage.width.toDouble();
+        final h = _workingImage.height.toDouble();
         setState(() {
-          // تعيين النقاط مرتبة بشكل صحيح بعد الفرز
-          _x1 = corners[0].dx.clamp(0.0, 1.0);
-          _y1 = corners[0].dy.clamp(0.0, 1.0);
-          
-          _x2 = corners[1].dx.clamp(0.0, 1.0);
-          _y2 = corners[1].dy.clamp(0.0, 1.0);
-          
-          _x3 = corners[2].dx.clamp(0.0, 1.0);
-          _y3 = corners[2].dy.clamp(0.0, 1.0);
-          
-          _x4 = corners[3].dx.clamp(0.0, 1.0);
-          _y4 = corners[3].dy.clamp(0.0, 1.0);
+          _x1 = (corners[0].dx / w).clamp(0.0, 1.0);
+          _y1 = (corners[0].dy / h).clamp(0.0, 1.0);
+          _x2 = (corners[1].dx / w).clamp(0.0, 1.0);
+          _y2 = (corners[1].dy / h).clamp(0.0, 1.0);
+          _x3 = (corners[2].dx / w).clamp(0.0, 1.0);
+          _y3 = (corners[2].dy / h).clamp(0.0, 1.0);
+          _x4 = (corners[3].dx / w).clamp(0.0, 1.0);
+          _y4 = (corners[3].dy / h).clamp(0.0, 1.0);
         });
       } else {
         _resetPerspective();
       }
+
+      // عرض معلومات التشخيص مباشرة على الشاشة (وضع اختبار مؤقت)
+      _showDebugDialog();
     } catch (e) {
-      debugPrint("Auto detect error: $e");
       _resetPerspective();
     } finally {
       if (mounted) setState(() => _isDetecting = false);
     }
+  }
+
+  void _showDebugDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('معلومات تشخيصية', style: TextStyle(color: Colors.white, fontSize: 14)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              AIDocumentDetector.lastDebugInfo,
+              style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
+              textDirection: TextDirection.ltr,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _applyCropAsync() async {
