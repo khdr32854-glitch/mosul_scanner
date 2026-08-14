@@ -161,13 +161,278 @@ class ImageEnhancer {
 /// MAIN ENTRY POINT & APP THEME
 /// ===============================================================
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // فحص تشخيصي اختياري لتحميل الموديل عند إقلاع التطبيق
-  await AIDocumentDetector.inspectModel();
-
+  // يظهر الترحيب فورًا، ويُحمّل النموذج عند أول استخدام للقص التلقائي.
   runApp(const MosulScannerApp());
+}
+
+
+
+enum AppLanguage { arabic, english, spanish, french, hindi, chinese }
+
+class LanguageOption {
+  final AppLanguage language;
+  final String nativeName;
+  final String englishName;
+  final TextDirection direction;
+
+  const LanguageOption(this.language, this.nativeName, this.englishName, this.direction);
+}
+
+const languageOptions = <LanguageOption>[
+  LanguageOption(AppLanguage.arabic, 'العربية', 'Arabic', TextDirection.rtl),
+  LanguageOption(AppLanguage.english, 'English', 'English', TextDirection.ltr),
+  LanguageOption(AppLanguage.spanish, 'Español', 'Spanish', TextDirection.ltr),
+  LanguageOption(AppLanguage.french, 'Français', 'French', TextDirection.ltr),
+  LanguageOption(AppLanguage.hindi, 'हिन्दी', 'Hindi', TextDirection.ltr),
+  LanguageOption(AppLanguage.chinese, '中文', 'Chinese', TextDirection.ltr),
+];
+
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _opened = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1900),
+    )..forward();
+    Future.delayed(const Duration(milliseconds: 2800), _openLanguageScreen);
+  }
+
+  void _openLanguageScreen() {
+    if (!mounted || _opened) return;
+    _opened = true;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LanguageScreen()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF07111F),
+      body: GestureDetector(
+        onTap: _openLanguageScreen,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final progress = Curves.easeOutCubic.transform(_controller.value);
+            final letterProgress = Curves.easeInOutCubic.transform(
+              (_controller.value / 0.72).clamp(0.0, 1.0),
+            );
+            final printerProgress = Curves.easeOutBack.transform(
+              ((_controller.value - 0.55) / 0.45).clamp(0.0, 1.0),
+            );
+
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 150,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Transform.translate(
+                          offset: Offset(-145 * (1 - letterProgress), 0),
+                          child: const Text(
+                            'S',
+                            style: TextStyle(
+                              color: Color(0xFF38BDF8),
+                              fontSize: 116,
+                              fontWeight: FontWeight.w900,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                        Transform.translate(
+                          offset: Offset(145 * (1 - letterProgress), 0),
+                          child: const Text(
+                            'P',
+                            style: TextStyle(
+                              color: Color(0xFF0EA5E9),
+                              fontSize: 116,
+                              fontWeight: FontWeight.w900,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                        Opacity(
+                          opacity: printerProgress.clamp(0.0, 1.0),
+                          child: Transform.scale(
+                            scale: 0.6 + (0.4 * printerProgress),
+                            child: Container(
+                              width: 76,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0F172A),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: const Color(0xFF7DD3FC),
+                                  width: 2,
+                                ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x5538BDF8),
+                                    blurRadius: 20,
+                                  ),
+                                ],
+                              ),
+                              child: const Icon(
+                                Icons.print_outlined,
+                                color: Color(0xFFBAE6FD),
+                                size: 32,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Opacity(
+                    opacity: progress.clamp(0.0, 1.0),
+                    child: const Text(
+                      'SCANNER PRINT',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        letterSpacing: 4,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Opacity(
+                    opacity: (progress * 0.7).clamp(0.0, 1.0),
+                    child: const Text(
+                      'Document scanning and printing',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class LanguageScreen extends StatelessWidget {
+  const LanguageScreen({super.key});
+
+  void _select(BuildContext context, LanguageOption option) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => MainScannerScreen(language: option.language),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 32, 22, 22),
+          child: Column(
+            children: [
+              const Icon(Icons.language, color: Color(0xFF0284C7), size: 54),
+              const SizedBox(height: 16),
+              const Text(
+                'Choose your language',
+                style: TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'اختر لغة واجهة التطبيق',
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+              ),
+              const SizedBox(height: 28),
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 14,
+                    childAspectRatio: 2.15,
+                  ),
+                  itemCount: languageOptions.length,
+                  itemBuilder: (context, index) {
+                    final option = languageOptions[index];
+                    return InkWell(
+                      onTap: () => _select(context, option),
+                      borderRadius: BorderRadius.circular(16),
+                      child: Ink(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFBAE6FD)),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x120F172A),
+                              blurRadius: 10,
+                              offset: Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              option.nativeName,
+                              textDirection: option.direction,
+                              style: const TextStyle(
+                                color: Color(0xFF0F172A),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              option.englishName,
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class MosulScannerApp extends StatelessWidget {
@@ -192,7 +457,7 @@ class MosulScannerApp extends StatelessWidget {
           elevation: 0.5,
         ),
       ),
-      home: const MainScannerScreen(),
+      home: const WelcomeScreen(),
     );
   }
 }
@@ -212,6 +477,7 @@ class DocumentItem {
   int rotationAngle;
   bool isPhotoMode;
   bool hasCurvedCorners;
+  int copies;
 
   DocumentItem({
     required this.id,
@@ -224,6 +490,7 @@ class DocumentItem {
     this.rotationAngle = 0,
     this.isPhotoMode = false,
     this.hasCurvedCorners = false,
+    this.copies = 1,
   });
 
   img.Image get rotatedImage {
@@ -264,7 +531,9 @@ class DocumentItem {
 /// ===============================================================
 
 class MainScannerScreen extends StatefulWidget {
-  const MainScannerScreen({super.key});
+  final AppLanguage language;
+
+  const MainScannerScreen({super.key, this.language = AppLanguage.arabic});
 
   @override
   State<MainScannerScreen> createState() => _MainScannerScreenState();
@@ -276,6 +545,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   final ImagePicker _picker = ImagePicker();
   String _activeTabMode = 'docs';
   bool _isLoadingImages = false;
+  int _copyCount = 1;
+
+  TextDirection get _direction => widget.language == AppLanguage.arabic
+      ? TextDirection.rtl
+      : TextDirection.ltr;
 
   static const double pageWidthMm = 210.0;
   static const double pageHeightMm = 297.0;
@@ -323,19 +597,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   Future<void> _processImageWithCropScreen(img.Image decoded, {bool isPhoto = false}) async {
     if (!mounted) return;
 
-    if (isPhoto) {
-      _addDecodedImage(decoded, isPhoto: true, curved: false);
-      return;
-    }
-
-    final result = await Navigator.push<img.Image>(
-      context,
-      MaterialPageRoute(builder: (_) => CropScreen(image: decoded)),
-    );
-
-    if (result != null && mounted) {
-      _addDecodedImage(result, isPhoto: false, curved: true);
-    }
+    // الصورة تدخل أولًا إلى واجهة العمل. القص اختياري من زر المستخدم.
+    _addDecodedImage(decoded, isPhoto: isPhoto, curved: false);
   }
 
   void _addDecodedImage(img.Image decodedImage, {bool isPhoto = false, bool curved = false}) {
@@ -368,7 +631,81 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
       _items.add(item);
       _activeItem = item;
+      _copyCount = 1;
     });
+  }
+
+  Future<void> _showCustomSizeDialog() async {
+    final widthController = TextEditingController(
+      text: _activeItem == null
+          ? ''
+          : (_activeItem!.widthMm / 10).toStringAsFixed(1),
+    );
+    final heightController = TextEditingController(
+      text: _activeItem == null
+          ? ''
+          : (_activeItem!.heightMm / 10).toStringAsFixed(1),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('إدخال الحجم بالسنتيمتر'),
+          content: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: widthController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'العرض سم',
+                    suffixText: 'سم',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: heightController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'الارتفاع سم',
+                    suffixText: 'سم',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final width = double.tryParse(
+                  widthController.text.trim().replaceAll(',', '.'),
+                );
+                final height = double.tryParse(
+                  heightController.text.trim().replaceAll(',', '.'),
+                );
+                if (width == null || height == null || width <= 0 || height <= 0) {
+                  _showMessage('أدخل عرضًا وارتفاعًا صحيحين', error: true);
+                  return;
+                }
+                _resizeActiveItem(width * 10, height * 10, curved: false);
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('تطبيق'),
+            ),
+          ],
+        );
+      },
+    );
+
+    widthController.dispose();
+    heightController.dispose();
   }
 
   void _resizeActiveItem(double width, double height, {bool isPhoto = false, bool curved = false}) {
@@ -405,9 +742,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         rotationAngle: source.rotationAngle,
         isPhotoMode: source.isPhotoMode,
         hasCurvedCorners: source.hasCurvedCorners,
+        copies: 1,
       );
       _items.add(duplicate);
       _activeItem = duplicate;
+      _copyCount += 1;
     });
   }
 
@@ -511,8 +850,10 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9), 
+    return Directionality(
+      textDirection: _direction,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF1F5F9),
       appBar: AppBar(
         title: const Text(
           'مكتب علاء الحديدي - نظام الطباعة الاحترافي',
@@ -558,66 +899,44 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                 _buildActionBtn('قص وتوضيح سحري', Icons.crop, _manualCropActiveItem, const Color(0xFF0EA5E9)),
                 _buildActionBtn('تنسيق تلقائي', Icons.grid_view, _autoAlignItems, const Color(0xFF10B981)),
                 _buildActionBtn('تدوير', Icons.rotate_right, _rotateActiveItem, const Color(0xFF64748B)),
-                _buildActionBtn('نسخ', Icons.copy_all, _duplicateActiveItem, const Color(0xFF8B5CF6)),
+                _buildActionBtn('نسخ', Icons.copy_all, _duplicateActiveItem, const Color(0xFF8B5CF6), badge: _copyCount),
+                _buildActionBtn('حذف', Icons.delete_outline, _deleteActiveItem, const Color(0xFFDC2626)),
               ],
             ),
           ),
           Expanded(
-            child: Row(
+            child: Column(
               children: [
                 Container(
-                  width: 115,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    border: Border(left: BorderSide(color: Color(0xFFE2E8F0))),
-                  ),
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        width: double.infinity,
-                        color: const Color(0xFFF8FAFC),
-                        child: const Text(
-                          'المقاسات القياسية',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFF475569), fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      Expanded(
-                        child: ListView(
-                          padding: const EdgeInsets.all(6),
-                          children: _activeTabMode == 'docs'
-                              ? [
-                                  _buildSizeBtn('بطاقة موحدة', '8.5 × 5.4 سم', () => _resizeActiveItem(85, 54, curved: true)),
-                                  _buildSizeBtn('بطاقة سكن', '8.8 × 5.8 سم', () => _resizeActiveItem(88, 58, curved: true)),
-                                  _buildSizeBtn('ورقة A4', '21 × 29.7 سم', () => _resizeActiveItem(210, 297, curved: false), clr: const Color(0xFF0D9488)),
-                                ]
-                              : [
-                                  _buildSizeBtn('صورة معاملة', '3.6 × 4.5 سم', () => _resizeActiveItem(36, 45, isPhoto: true)),
-                                  _buildSizeBtn('صورة مصغرة', '2.5 × 3.4 سم', () => _resizeActiveItem(25, 34, isPhoto: true)),
-                                ],
-                        ),
-                      ),
-                      if (_activeItem != null)
+                  height: 94,
+                  width: double.infinity,
+                  color: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildSizeBtn('بطاقة موحدة', '8.5 × 5.4 سم', () => _resizeActiveItem(85, 54, curved: true)),
+                        _buildSizeBtn('بطاقة سكن', '8.8 × 5.8 سم', () => _resizeActiveItem(88, 58, curved: true)),
+                        _buildSizeBtn('ورقة A4', '21 × 29.7 سم', () => _resizeActiveItem(210, 297, curved: false), clr: const Color(0xFF0D9488)),
+                        _buildSizeBtn('صورة معاملة', '3.6 × 4.5 سم', () => _resizeActiveItem(36, 45, isPhoto: true)),
+                        _buildSizeBtn('صورة مصغرة', '2.5 × 3.4 سم', () => _resizeActiveItem(25, 34, isPhoto: true)),
                         Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFFEE2E2),
-                                foregroundColor: const Color(0xFFDC2626),
-                                elevation: 0,
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                              ),
-                              onPressed: _deleteActiveItem,
-                              icon: const Icon(Icons.delete_outline, size: 16),
-                              label: const Text('حذف العنصر', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: OutlinedButton.icon(
+                            onPressed: _showCustomSizeDialog,
+                            icon: const Icon(Icons.straighten, size: 18),
+                            label: const Text('حجم مخصص\nبالسم', textAlign: TextAlign.center),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF7C3AED),
+                              side: const BorderSide(color: Color(0xFFDDD6FE)),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                           ),
                         ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 Expanded(
@@ -626,8 +945,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                     child: Center(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final scaleX = (constraints.maxWidth - 30) / pageWidthMm;
-                          final scaleY = (constraints.maxHeight - 30) / pageHeightMm;
+                          final scaleX = (constraints.maxWidth - 24) / pageWidthMm;
+                          final scaleY = (constraints.maxHeight - 24) / pageHeightMm;
                           final scale = math.min(scaleX, scaleY);
 
                           return Container(
@@ -636,7 +955,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               boxShadow: [
-                                BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 12, offset: const Offset(0, 4)),
+                                BoxShadow(color: Colors.black.withValues(alpha: 0.10), blurRadius: 16, offset: const Offset(0, 5)),
                               ],
                             ),
                             child: Stack(
@@ -685,7 +1004,8 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildToolBtn(String label, IconData icon, bool selected, VoidCallback onTap) {
@@ -713,7 +1033,7 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
     );
   }
 
-  Widget _buildActionBtn(String label, IconData icon, VoidCallback onTap, Color color) {
+  Widget _buildActionBtn(String label, IconData icon, VoidCallback onTap, Color color, {int? badge}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: InkWell(
@@ -726,11 +1046,33 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: color.withValues(alpha: 0.3)),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
-              Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 14, color: color),
+                  const SizedBox(width: 4),
+                  Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                ],
+              ),
+              if (badge != null) ...[
+                const SizedBox(height: 2),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 18, minHeight: 15),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '$badge',
+                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -830,10 +1172,14 @@ class _CropScreenState extends State<CropScreen> {
     _updateDisplayBytesAsync();
   }
 
-  Future<void> _updateDisplayBytesAsync() async {
+  Future<void> _updateDisplayBytesAsync({bool showDelay = false}) async {
     setState(() => _isProcessing = true);
 
     try {
+      if (showDelay) {
+        await Future.delayed(const Duration(seconds: 4));
+      }
+      if (!mounted) return;
       final result = await compute(processPreviewIsolate, {
         'image': _workingImage,
         'mode': _filter,
@@ -847,9 +1193,6 @@ class _CropScreenState extends State<CropScreen> {
         _isProcessing = false;
       });
 
-      if (_x1 == 0.05 && _y1 == 0.05 && _x3 == 0.95 && _y3 == 0.95) {
-        _runAutoDetect();
-      }
     } catch (e) {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -946,6 +1289,8 @@ class _CropScreenState extends State<CropScreen> {
     setState(() => _isSaving = true);
     
     try {
+      await Future.delayed(const Duration(seconds: 4));
+      if (!mounted) return;
       final cropped = await compute(cropFinalIsolate, {
         'image': _workingImage,
         'x1': _x1, 'y1': _y1,
@@ -1099,7 +1444,7 @@ class _CropScreenState extends State<CropScreen> {
     return GestureDetector(
       onTap: () {
         setState(() => _filter = mode);
-        _updateDisplayBytesAsync();
+        _updateDisplayBytesAsync(showDelay: true);
       },
       child: Container(
         width: 75,
