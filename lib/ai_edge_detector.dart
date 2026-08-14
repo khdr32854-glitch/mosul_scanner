@@ -1,19 +1,20 @@
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart'; // تمت الإضافة من أجل debugPrint
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
-class DocumentScannerAI {
+// تم تغيير الاسم ليتطابق مع ما تستخدمه في main.dart
+class AIDocumentDetector {
   late Interpreter _interpreter;
 
   /// 1. تهيئة وتحميل النموذج
   Future<void> loadModel() async {
     try {
-      // تم تصحيح المسار ليتطابق مع pubspec.yaml
       _interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
-      print("تم تحميل نموذج الذكاء الاصطناعي بنجاح.");
+      debugPrint("تم تحميل نموذج الذكاء الاصطناعي بنجاح."); // استبدال print
     } catch (e) {
-      print("خطأ في تحميل النموذج: $e");
+      debugPrint("خطأ في تحميل النموذج: $e"); // استبدال print
     }
   }
 
@@ -27,14 +28,16 @@ class DocumentScannerAI {
     int cornersIndex = -1;
     Map<int, Object> outputs = {};
 
-    for (var tensor in outputTensors) {
-      outputs[tensor.index] = _createEmptyBuffer(tensor.shape);
+    // استخدام حلقة for تقليدية لتجاوز مشكلة غياب خاصية index في الإصدارات الحديثة
+    for (int i = 0; i < outputTensors.length; i++) {
+      var tensor = outputTensors[i];
+      outputs[i] = _createEmptyBuffer(tensor.shape);
       
       // البحث عن المخرج الصحيح للزوايا بأبعاد [1, 1, 4, 2]
       if (tensor.shape.length == 4 && 
           tensor.shape[2] == 4 && 
           tensor.shape[3] == 2) {
-        cornersIndex = tensor.index;
+        cornersIndex = i;
       }
     }
 
@@ -42,8 +45,8 @@ class DocumentScannerAI {
       throw Exception("فشل: لم يتم العثور على المخرج الخاص بالزوايا في هذا النموذج.");
     }
 
-    // ج. تشغيل النموذج
-    _interpreter.runForMultipleInputsOutputs([inputImage], outputs);
+    // ج. تشغيل النموذج باستخدام الدالة الحديثة
+    _interpreter.runForMultipleInputs([inputImage], outputs);
 
     // د. استخلاص الإحداثيات (Normalized coordinates 0.0 - 1.0)
     var cornersData = outputs[cornersIndex] as List;
