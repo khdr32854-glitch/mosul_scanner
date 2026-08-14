@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -56,13 +57,24 @@ class AIDocumentDetector {
       final original = img.decodeImage(imageBytes);
       if (original == null) return null;
 
-      final resized = img.copyResize(original, width: _inputW, height: _inputH);
+      // letterbox resize: نحافظ على نسبة الصورة الأصلية ونضيف حشوة سوداء
+      // متوسطة لنوصل لمقاس الإدخال المربّع (نفس أسلوب تدريب الموديل غالبًا)
+      final scale = math.min(_inputW / original.width, _inputH / original.height);
+      final newW = (original.width * scale).round().clamp(1, _inputW);
+      final newH = (original.height * scale).round().clamp(1, _inputH);
+      final padX = ((_inputW - newW) / 2).round();
+      final padY = ((_inputH - newH) / 2).round();
+
+      final resizedContent = img.copyResize(original, width: newW, height: newH);
+      final canvas = img.Image(width: _inputW, height: _inputH);
+      img.fill(canvas, color: img.ColorRgb8(0, 0, 0));
+      img.compositeImage(canvas, resizedContent, dstX: padX, dstY: padY);
 
       final input = [
         List.generate(
           _inputH,
           (y) => List.generate(_inputW, (x) {
-            final p = resized.getPixel(x, y);
+            final p = canvas.getPixel(x, y);
             return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
           }),
         ),
@@ -81,7 +93,14 @@ class AIDocumentDetector {
       for (int i = 0; i < _outputCount; i++) {
         final shape = interpreter.getOutputTensor(i).shape;
         if (shape.length == 4 && shape[2] == 4 && shape[3] == 2) {
-          return _extractCorners(outputs[i], original.width, original.height);
+          return _extractCorners(
+            outputs[i],
+            original.width,
+            original.height,
+            scale,
+            padX,
+            padY,
+          );
         }
       }
 
@@ -101,7 +120,16 @@ class AIDocumentDetector {
 
   /// يقرأ مصفوفة الـ keypoints (شكلها [1,1,4,2]) ويرجع 4 نقاط
   /// مرتبة هندسيًا: أعلى-يسار, أعلى-يمين, أسفل-يمين, أسفل-يسار.
-  static List<Offset>? _extractCorners(dynamic raw, int origW, int origH) {
+  /// [scale], [padX], [padY]: نفس قيم letterbox المستخدمة عند التحضير،
+  /// لعكس التحويل ورجوع الإحداثيات لمقاس الصورة الأصلية.
+  static List<Offset>? _extractCorners(
+    dynamic raw,
+    int origW,
+    int origH,
+    double scale,
+    int padX,
+    int padY,
+  ) {
     // ننزل بالمصفوفة حتى نوصل لآخر بعدين (4 نقاط × 2 إحداثية)
     dynamic level = raw;
     while (level is List &&
@@ -118,15 +146,25 @@ class AIDocumentDetector {
       if (kp is! List || kp.length < 2) return null;
 
       // ترتيب الإحداثيات في TensorFlow Object Detection API القياسي هو (y, x)
-      double y = (kp[0] as num).toDouble();
-      double x = (kp[1] as num).toDouble();
+      // وهي منسوبة لمساحة الـ 224×224 كاملة (بما فيها الحشوة السوداء)
+      double yNorm = (kp[0] as num).toDouble();
+      double xNorm = (kp[1] as num).toDouble();
 
-      if (x < 0) x = 0;
-      if (x > 1) x = 1;
-      if (y < 0) y = 0;
-      if (y > 1) y = 1;
+      if (xNorm < 0) xNorm = 0;
+      if (xNorm > 1) xNorm = 1;
+      if (yNorm < 0) yNorm = 0;
+      if (yNorm > 1) yNorm = 1;
 
-      points.add(Offset(x * origW, y * origH));
+      // إزالة الحشوة والتحجيم، رجوع لمقاس الصورة الأصلية
+      double xOrig = (xNorm * _inputW - padX) / scale;
+      double yOrig = (yNorm * _inputH - padY) / scale;
+
+      if (xOrig < 0) xOrig = 0;
+      if (xOrig > origW) xOrig = origW.toDouble();
+      if (yOrig < 0) yOrig = 0;
+      if (yOrig > origH) yOrig = origH.toDouble();
+
+      points.add(Offset(xOrig, yOrig));
     }
 
     // ترتيب هندسي مستقل عن ترتيب الموديل الداخلي:
