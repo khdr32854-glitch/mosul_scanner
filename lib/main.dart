@@ -281,42 +281,57 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
+  // -------------------------------------------------------------
+  // التحديث الشامل لدالة جلب الصور لمعالجة مشكلة التوقف المستمر 
+  // -------------------------------------------------------------
   Future<void> _addManualImages(ImageSource source) async {
     try {
       setState(() => _isLoadingImages = true);
+      List<XFile> files = [];
 
       if (source == ImageSource.camera) {
         final photo = await _picker.pickImage(
           source: ImageSource.camera,
-          imageQuality: 95,
+          imageQuality: 85,
+          // تحديد الأبعاد القصوى يمنع انهيار الذاكرة (RAM) ويسرع المعالجة بشكل خيالي
+          maxWidth: 1500,
+          maxHeight: 1500,
         );
-        if (photo != null) {
-          final bytes = await File(photo.path).readAsBytes();
-          final decoded = await compute(decodeImageIsolate, bytes);
-          if (decoded != null) {
-            await _processImageWithCropScreen(
-              decoded,
-              isPhoto: _activeTabMode == 'photos',
-            );
-          }
-        }
+        if (photo != null) files.add(photo);
       } else {
-        final files = await _picker.pickMultiImage(imageQuality: 95);
-        for (final file in files) {
-          final bytes = await File(file.path).readAsBytes();
-          final decoded = await compute(decodeImageIsolate, bytes);
-          if (decoded != null) {
-            await _processImageWithCropScreen(
-              decoded,
-              isPhoto: _activeTabMode == 'photos',
-            );
-          }
+        final pickedFiles = await _picker.pickMultiImage(
+          imageQuality: 85,
+          maxWidth: 1500,
+          maxHeight: 1500,
+        );
+        files.addAll(pickedFiles);
+      }
+
+      // إذا لم يقم المستخدم باختيار شيء، نلغي التحميل ونخرج
+      if (files.isEmpty) {
+        if (mounted) setState(() => _isLoadingImages = false);
+        return;
+      }
+
+      // إيقاف مؤشر التحميل لأن الصور أصبحت جاهزة وسننتقل لشاشة القص
+      if (mounted) setState(() => _isLoadingImages = false);
+
+      for (final file in files) {
+        final bytes = await File(file.path).readAsBytes();
+        final decoded = await compute(decodeImageIsolate, bytes);
+        
+        if (decoded != null && mounted) {
+          await _processImageWithCropScreen(
+            decoded,
+            isPhoto: _activeTabMode == 'photos',
+          );
         }
       }
     } catch (e) {
-      if (mounted) _showMessage('خطأ في جلب الصور: $e', error: true);
-    } finally {
-      if (mounted) setState(() => _isLoadingImages = false);
+      if (mounted) {
+        _showMessage('خطأ في جلب الصور: $e', error: true);
+        setState(() => _isLoadingImages = false);
+      }
     }
   }
 
@@ -876,6 +891,9 @@ class _CropScreenState extends State<CropScreen> {
     });
   }
 
+  // -------------------------------------------------------------
+  // التحديث الصحيح للقص التلقائي (بدون القسمة على الأبعاد)
+  // -------------------------------------------------------------
   Future<void> _runAutoDetect() async {
     if (_isDetecting) return;
     setState(() => _isDetecting = true);
@@ -887,22 +905,22 @@ class _CropScreenState extends State<CropScreen> {
       if (!mounted) return;
 
       if (corners != null && corners.length == 4) {
-        final w = _workingImage.width.toDouble();
-        final h = _workingImage.height.toDouble();
         setState(() {
-          _x1 = (corners[0].dx / w).clamp(0.0, 1.0);
-          _y1 = (corners[0].dy / h).clamp(0.0, 1.0);
-          _x2 = (corners[1].dx / w).clamp(0.0, 1.0);
-          _y2 = (corners[1].dy / h).clamp(0.0, 1.0);
-          _x3 = (corners[2].dx / w).clamp(0.0, 1.0);
-          _y3 = (corners[2].dy / h).clamp(0.0, 1.0);
-          _x4 = (corners[3].dx / w).clamp(0.0, 1.0);
-          _y4 = (corners[3].dy / h).clamp(0.0, 1.0);
+          // نستخدم الإحداثيات النسبية القادمة من النموذج مباشرة
+          _x1 = corners[0].dx.clamp(0.0, 1.0);
+          _y1 = corners[0].dy.clamp(0.0, 1.0);
+          _x2 = corners[1].dx.clamp(0.0, 1.0);
+          _y2 = corners[1].dy.clamp(0.0, 1.0);
+          _x3 = corners[2].dx.clamp(0.0, 1.0);
+          _y3 = corners[2].dy.clamp(0.0, 1.0);
+          _x4 = corners[3].dx.clamp(0.0, 1.0);
+          _y4 = corners[3].dy.clamp(0.0, 1.0);
         });
       } else {
         _resetPerspective();
       }
     } catch (e) {
+      debugPrint("Auto detect error: $e");
       _resetPerspective();
     } finally {
       if (mounted) setState(() => _isDetecting = false);
