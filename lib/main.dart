@@ -281,9 +281,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
   static const double pageHeightMm = 297.0;
   static const double pageMarginMm = 10.0;
 
-  // -------------------------------------------------------------
-  // التحديث الشامل لدالة جلب الصور لمعالجة مشكلة التوقف المستمر 
-  // -------------------------------------------------------------
   Future<void> _addManualImages(ImageSource source) async {
     try {
       setState(() => _isLoadingImages = true);
@@ -293,7 +290,6 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         final photo = await _picker.pickImage(
           source: ImageSource.camera,
           imageQuality: 85,
-          // تحديد الأبعاد القصوى يمنع انهيار الذاكرة (RAM) ويسرع المعالجة بشكل خيالي
           maxWidth: 1500,
           maxHeight: 1500,
         );
@@ -307,13 +303,11 @@ class _MainScannerScreenState extends State<MainScannerScreen> {
         files.addAll(pickedFiles);
       }
 
-      // إذا لم يقم المستخدم باختيار شيء، نلغي التحميل ونخرج
       if (files.isEmpty) {
         if (mounted) setState(() => _isLoadingImages = false);
         return;
       }
 
-      // إيقاف مؤشر التحميل لأن الصور أصبحت جاهزة وسننتقل لشاشة القص
       if (mounted) setState(() => _isLoadingImages = false);
 
       for (final file in files) {
@@ -891,9 +885,6 @@ class _CropScreenState extends State<CropScreen> {
     });
   }
 
-  // -------------------------------------------------------------
-  // التحديث الصحيح للقص التلقائي (بدون القسمة على الأبعاد)
-  // -------------------------------------------------------------
   Future<void> _runAutoDetect() async {
     if (_isDetecting) return;
     setState(() => _isDetecting = true);
@@ -905,14 +896,34 @@ class _CropScreenState extends State<CropScreen> {
       if (!mounted) return;
 
       if (corners != null && corners.length == 4) {
+        
+        // 1. حساب نقطة المركز للنقاط الأربع
+        double cx = 0, cy = 0;
+        for (var p in corners) {
+          cx += p.dx;
+          cy += p.dy;
+        }
+        cx /= 4;
+        cy /= 4;
+
+        // 2. ترتيب النقاط هندسياً مع عقارب الساعة (TL, TR, BR, BL)
+        corners.sort((a, b) {
+          double angleA = math.atan2(a.dy - cy, a.dx - cx);
+          double angleB = math.atan2(b.dy - cy, b.dx - cx);
+          return angleA.compareTo(angleB);
+        });
+
         setState(() {
-          // نستخدم الإحداثيات النسبية القادمة من النموذج مباشرة
+          // تعيين النقاط مرتبة بشكل صحيح بعد الفرز
           _x1 = corners[0].dx.clamp(0.0, 1.0);
           _y1 = corners[0].dy.clamp(0.0, 1.0);
+          
           _x2 = corners[1].dx.clamp(0.0, 1.0);
           _y2 = corners[1].dy.clamp(0.0, 1.0);
+          
           _x3 = corners[2].dx.clamp(0.0, 1.0);
           _y3 = corners[2].dy.clamp(0.0, 1.0);
+          
           _x4 = corners[3].dx.clamp(0.0, 1.0);
           _y4 = corners[3].dy.clamp(0.0, 1.0);
         });
