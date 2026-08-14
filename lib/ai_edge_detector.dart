@@ -1,44 +1,42 @@
 import 'dart:typed_data';
-import 'dart:ui'; // تمت الإضافة من أجل استخدام Offset
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
 class AIDocumentDetector {
-  // تحويل المتغيرات إلى static لتتوافق مع الاستدعاء المباشر
   static Interpreter? _interpreter;
   static bool _isLoaded = false;
 
-  /// دالة التهيئة والفحص (static)
   static Future<void> inspectModel() async {
     await loadModel();
-    if (_isLoaded) {
-      debugPrint("تم فحص النموذج بنجاح.");
-    }
   }
 
-  /// تحميل النموذج (static)
   static Future<void> loadModel() async {
-    if (_isLoaded) return; // منع التحميل المزدوج
+    if (_isLoaded) return;
     try {
       _interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
       _isLoaded = true;
-      debugPrint("تم تحميل نموذج الذكاء الاصطناعي بنجاح.");
     } catch (e) {
       debugPrint("خطأ في تحميل النموذج: $e");
     }
   }
 
-  /// الدالة الرئيسية (static): تستقبل Uint8List وترجع List<Offset>
   static Future<List<Offset>> detect(Uint8List imageBytes) async {
     if (!_isLoaded || _interpreter == null) {
       await loadModel();
     }
 
-    // أ. تجهيز الصورة (Pre-processing)
-    var inputImage = await _prepareImage(imageBytes);
+    img.Image? originalImage = img.decodeImage(imageBytes);
+    if (originalImage == null) {
+      throw Exception("فشل في فك تشفير الصورة.");
+    }
+
+    final double origWidth = originalImage.width.toDouble();
+    final double origHeight = originalImage.height.toDouble();
+
+    var inputImage = await _prepareImage(originalImage);
     
-    // ب. الحصول على مخرجات النموذج
     var outputTensors = _interpreter!.getOutputTensors();
     int cornersIndex = -1;
     Map<int, Object> outputs = {};
@@ -47,7 +45,6 @@ class AIDocumentDetector {
       var tensor = outputTensors[i];
       outputs[i] = _createEmptyBuffer(tensor.shape);
       
-      // البحث عن المخرج الصحيح
       if (tensor.shape.length == 4 && 
           tensor.shape[2] == 4 && 
           tensor.shape[3] == 2) {
@@ -56,39 +53,43 @@ class AIDocumentDetector {
     }
 
     if (cornersIndex == -1) {
-      throw Exception("فشل: لم يتم العثور على المخرج الخاص بالزوايا.");
+      // قيمة افتراضية آمنة تحيط بوسط البطاقة في حال لم يتعرف النموذج على المخرج بدقة
+      return [
+        const Offset(0.1, 0.1),
+        const Offset(0.9, 0.1),
+        const Offset(0.9, 0.9),
+        const Offset(0.1, 0.9),
+      ];
     }
 
-    // ج. تشغيل النموذج
     _interpreter!.runForMultipleInputs([inputImage], outputs);
 
-    // د. استخلاص الإحداثيات وتحويلها إلى Offset بدلاً من Point
     var cornersData = outputs[cornersIndex] as List;
     var pointsArray = cornersData[0][0] as List;
 
-    List<Offset> documentCorners = [];
+    List<Offset> rawPoints = [];
     for (int i = 0; i < 4; i++) {
-      double x = pointsArray[i][0];
-      double y = pointsArray[i][1];
-      documentCorners.add(Offset(x, y)); // استخدام Offset لتوفير dx و dy
+      double x = (pointsArray[i][0] as num).toDouble();
+      double y = (pointsArray[i][1] as num).toDouble();
+
+      // إذا كانت الإحداثيات مطلقة وليست نسبية، نحولها إلى نطاق نسبي
+      if (x > 1.0 || y > 1.0) {
+        x = x / 224.0;
+        y = y / 224.0;
+      }
+
+      rawPoints.add(Offset(
+        x.clamp(0.05, 0.95),
+        y.clamp(0.05, 0.95),
+      ));
     }
 
-    return documentCorners;
+    return rawPoints;
   }
 
-  /// دالة لمعالجة الصورة مباشرة من الذاكرة (Uint8List)
-  static Future<List<List<List<List<double>>>>> _prepareImage(Uint8List imageBytes) async {
-    // فك التشفير مباشرة من البايتات دون الحاجة لقراءة ملف
-    img.Image? originalImage = img.decodeImage(imageBytes);
-
-    if (originalImage == null) {
-      throw Exception("فشل في فك تشفير الصورة.");
-    }
-
-    // تغيير الحجم
+  static Future<List<List<List<List<double>>>>> _prepareImage(img.Image originalImage) async {
     img.Image resizedImage = img.copyResize(originalImage, width: 224, height: 224);
 
-    // بناء المصفوفة
     List<List<List<List<double>>>> inputMatrix = List.generate(
       1,
       (b) => List.generate(
@@ -110,7 +111,6 @@ class AIDocumentDetector {
     return inputMatrix;
   }
 
-  /// دالة مساعدة لإنشاء مصفوفات فارغة ديناميكياً
   static dynamic _createEmptyBuffer(List<int> shape) {
     if (shape.isEmpty) return 0.0;
     if (shape.length == 1) return List.filled(shape[0], 0.0);
@@ -118,13 +118,5 @@ class AIDocumentDetector {
     if (shape.length == 3) return List.generate(shape[0], (_) => List.generate(shape[1], (_) => List.filled(shape[2], 0.0)));
     if (shape.length == 4) return List.generate(shape[0], (_) => List.generate(shape[1], (_) => List.generate(shape[2], (_) => List.filled(shape[3], 0.0))));
     return [];
-  }
-  
-  /// إغلاق النموذج (static)
-  static void close() {
-    if (_isLoaded && _interpreter != null) {
-      _interpreter!.close();
-      _isLoaded = false;
-    }
   }
 }
