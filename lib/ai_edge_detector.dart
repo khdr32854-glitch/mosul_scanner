@@ -1,25 +1,41 @@
 import 'dart:io';
 import 'dart:math';
-import 'package:flutter/foundation.dart'; // تمت الإضافة من أجل debugPrint
+import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
-// تم تغيير الاسم ليتطابق مع ما تستخدمه في main.dart
 class AIDocumentDetector {
   late Interpreter _interpreter;
+  bool _isLoaded = false;
 
-  /// 1. تهيئة وتحميل النموذج
-  Future<void> loadModel() async {
-    try {
-      _interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
-      debugPrint("تم تحميل نموذج الذكاء الاصطناعي بنجاح."); // استبدال print
-    } catch (e) {
-      debugPrint("خطأ في تحميل النموذج: $e"); // استبدال print
+  /// دالة التهيئة والفحص (تمت إضافتها لتتوافق مع main.dart)
+  Future<void> inspectModel() async {
+    await loadModel();
+    if (_isLoaded) {
+      debugPrint("تم فحص النموذج بنجاح.");
+      // يمكنك تفعيل السطرين التاليين إذا أردت طباعة أبعاد النموذج في الكونسول
+      // debugPrint("المدخلات: ${_interpreter.getInputTensors().map((t) => t.shape)}");
+      // debugPrint("المخرجات: ${_interpreter.getOutputTensors().map((t) => t.shape)}");
     }
   }
 
-  /// 2. الدالة الرئيسية: تستقبل مسار الصورة وترجع الزوايا الأربع
-  Future<List<Point<double>>> processImage(String imagePath) async {
+  /// تحميل النموذج
+  Future<void> loadModel() async {
+    try {
+      _interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
+      _isLoaded = true;
+      debugPrint("تم تحميل نموذج الذكاء الاصطناعي بنجاح.");
+    } catch (e) {
+      debugPrint("خطأ في تحميل النموذج: $e");
+    }
+  }
+
+  /// الدالة الرئيسية: (تم تغيير الاسم من processImage إلى detect لتتوافق مع main.dart)
+  Future<List<Point<double>>> detect(String imagePath) async {
+    if (!_isLoaded) {
+      await loadModel();
+    }
+
     // أ. تجهيز الصورة (Pre-processing)
     var inputImage = await _prepareImage(imagePath);
     
@@ -28,7 +44,6 @@ class AIDocumentDetector {
     int cornersIndex = -1;
     Map<int, Object> outputs = {};
 
-    // استخدام حلقة for تقليدية لتجاوز مشكلة غياب خاصية index في الإصدارات الحديثة
     for (int i = 0; i < outputTensors.length; i++) {
       var tensor = outputTensors[i];
       outputs[i] = _createEmptyBuffer(tensor.shape);
@@ -45,7 +60,7 @@ class AIDocumentDetector {
       throw Exception("فشل: لم يتم العثور على المخرج الخاص بالزوايا في هذا النموذج.");
     }
 
-    // ج. تشغيل النموذج باستخدام الدالة الحديثة
+    // ج. تشغيل النموذج
     _interpreter.runForMultipleInputs([inputImage], outputs);
 
     // د. استخلاص الإحداثيات (Normalized coordinates 0.0 - 1.0)
@@ -62,7 +77,7 @@ class AIDocumentDetector {
     return documentCorners;
   }
 
-  /// 3. دالة داخلية لمعالجة الصورة قبل إرسالها للنموذج
+  /// دالة داخلية لمعالجة الصورة قبل إرسالها للنموذج
   Future<List<List<List<List<double>>>>> _prepareImage(String imagePath) async {
     final fileBytes = await File(imagePath).readAsBytes();
     img.Image? originalImage = img.decodeImage(fileBytes);
@@ -96,7 +111,7 @@ class AIDocumentDetector {
     return inputMatrix;
   }
 
-  /// 4. دالة مساعدة لإنشاء مصفوفات فارغة ديناميكياً
+  /// دالة مساعدة لإنشاء مصفوفات فارغة ديناميكياً
   dynamic _createEmptyBuffer(List<int> shape) {
     if (shape.isEmpty) return 0.0;
     if (shape.length == 1) return List.filled(shape[0], 0.0);
@@ -106,8 +121,11 @@ class AIDocumentDetector {
     return [];
   }
   
-  /// 5. إغلاق النموذج لتحرير الذاكرة عند الانتهاء
+  /// إغلاق النموذج لتحرير الذاكرة عند الانتهاء
   void close() {
-    _interpreter.close();
+    if (_isLoaded) {
+      _interpreter.close();
+      _isLoaded = false;
+    }
   }
 }
