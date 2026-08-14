@@ -89,11 +89,22 @@ class AIDocumentDetector {
 
       interpreter.runForMultipleInputs([input], outputs);
 
+      // طباعة تشخيصية لكل المخرجات الستة بشكلها الخام (بدون أي تصحيح)
+      // لنتأكد فعليًا من ترتيب النقاط وقيمها الحقيقية قبل أي افتراض
+      debugPrint('==================================================');
+      debugPrint('🔍 RAW OUTPUTS (قبل أي تصحيح):');
+      for (int i = 0; i < _outputCount; i++) {
+        debugPrint('Output[$i] shape=${interpreter.getOutputTensor(i).shape} => ${outputs[i]}');
+      }
+      debugPrint('==================================================');
+
       // إيجاد مخرج الزوايا: الشكل الوحيد المميز بين كل المخرجات هو [.., .., 4, 2]
       for (int i = 0; i < _outputCount; i++) {
         final shape = interpreter.getOutputTensor(i).shape;
         if (shape.length == 4 && shape[2] == 4 && shape[3] == 2) {
-          return _extractCorners(
+          debugPrint('🎯 مخرج النقاط (raw normalized, y,x): ${outputs[i]}');
+          debugPrint('🎯 letterbox params: scale=$scale padX=$padX padY=$padY origW=${original.width} origH=${original.height}');
+          final result = _extractCorners(
             outputs[i],
             original.width,
             original.height,
@@ -101,6 +112,8 @@ class AIDocumentDetector {
             padX,
             padY,
           );
+          debugPrint('🎯 النقاط بعد التصحيح والترتيب (TL,TR,BR,BL): $result');
+          return result;
         }
       }
 
