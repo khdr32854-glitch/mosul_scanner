@@ -121,7 +121,8 @@ class AIDocumentDetector {
 
       // في هذا النموذج تحديدًا:
       // :1 = keypoints [1,1,4,2]
-      // :5 = keypoint confidence [1,1,4]
+      // :0 = درجات الثقة الأربع [1,1,4]
+      // ملاحظة: المخرج :5 موجود لكنه ليس meanConfidenceScore
       final keypointOutputIndex = _findOutputIndex(
         interpreter,
         namePart: ':1',
@@ -141,7 +142,7 @@ class AIDocumentDetector {
 
       final scoreOutputIndex = _findOutputIndex(
         interpreter,
-        namePart: ':5',
+        namePart: ':0',
         requiredShape: (shape) =>
             shape.length == 3 && shape[1] == 1 && shape[2] == 4,
         fallback: _findShapeIndex(
