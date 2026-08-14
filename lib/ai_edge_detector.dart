@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -6,145 +5,302 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
-/// كاشف زوايا المستند باستخدام موديل border_detect_224.tflite
+/// كاشف زوايا المستند باستخدام border_detect_224.tflite.
+///
+/// تمت مطابقة التجهيز مع ClearScanner الأصلي:
+/// - تغيير مباشر للصورة إلى 224x224.
+/// - Bilinear resize.
+/// - RGB بصيغة FLOAT32 بقيم خام من 0 إلى 255.
+/// - لا يوجد Letterbox ولا حشوة سوداء.
+/// - النقاط تُقرأ بترتيب النموذج: TL, TR, BR, BL.
+/// - لا يُقبل الكشف إلا إذا كان متوسط ثقة النقاط أكبر من 0.75.
 class AIDocumentDetector {
   static Interpreter? _interpreter;
-  static int _inputH = 224;
-  static int _inputW = 224;
+  static const String _modelAsset = 'assets/border_detect_224.tflite';
+  static const int _inputWidth = 224;
+  static const int _inputHeight = 224;
+  static const int _outputCount = 6;
+  static const double _minimumConfidence = 0.75;
 
   static String lastDebugInfo = '';
-  static const int _outputCount = 6;
 
   static Future<void> _ensureLoaded() async {
     if (_interpreter != null) return;
-    final interpreter = await Interpreter.fromAsset('assets/border_detect_224.tflite');
+
+    // ClearScanner الأصلي يستخدم أربعة خيوط للمعالجة.
+    final options = InterpreterOptions()..threads = 4;
+    final interpreter = await Interpreter.fromAsset(
+      _modelAsset,
+      options: options,
+    );
     _interpreter = interpreter;
-    final inputTensor = interpreter.getInputTensor(0);
-    _inputH = inputTensor.shape[1];
-    _inputW = inputTensor.shape[2];
   }
 
   static Future<void> inspectModel() async {
     try {
       await _ensureLoaded();
-    } catch (e) {
-      debugPrint('❌ حدث خطأ: $e');
+      final interpreter = _interpreter!;
+
+      final input = interpreter.getInputTensor(0);
+      final outputInfo = <String>[];
+
+      for (int i = 0; i < interpreter.getOutputTensors().length; i++) {
+        final tensor = interpreter.getOutputTensor(i);
+        outputInfo.add(
+          '$i: name=${tensor.name}, shape=${tensor.shape}, type=${tensor.type}',
+        );
+      }
+
+      lastDebugInfo = [
+        'Input: shape=${input.shape}, type=${input.type}',
+        ...outputInfo,
+      ].join('\n');
+
+      debugPrint(lastDebugInfo);
+    } catch (e, stackTrace) {
+      lastDebugInfo = 'خطأ في تحميل النموذج: $e';
+      debugPrint('$lastDebugInfo\n$stackTrace');
     }
   }
 
+  /// يكتشف زوايا المستند ويرجعها بالبكسل داخل الصورة الأصلية.
+  ///
+  /// ترتيب النتيجة:
+  /// [topLeft, topRight, bottomRight, bottomLeft]
   static Future<List<Offset>?> detect(Uint8List imageBytes) async {
     try {
       await _ensureLoaded();
-      if (_interpreter == null) return null;
+      final interpreter = _interpreter;
+      if (interpreter == null) return null;
 
       final original = img.decodeImage(imageBytes);
-      if (original == null) return null;
+      if (original == null || original.width < 10 || original.height < 10) {
+        lastDebugInfo = 'الصورة غير صالحة';
+        return null;
+      }
 
-      final int origW = original.width;
-      final int origH = original.height;
+      final originalWidth = original.width.toDouble();
+      final originalHeight = original.height.toDouble();
 
-      // 1. نظام الـ Letterbox الإلزامي لنجاح الموديل
-      final double scale = math.min(_inputW / origW, _inputH / origH);
-      final int newW = (origW * scale).round().clamp(1, _inputW);
-      final int newH = (origH * scale).round().clamp(1, _inputH);
-      
-      final int padX = ((_inputW - newW) / 2).round();
-      final int padY = ((_inputH - newH) / 2).round();
+      // مهم جدًا: ClearScanner يستخدم Resize مباشر إلى 224x224.
+      // لا تستخدم Letterbox ولا تضف حشوة سوداء.
+      final resized = img.copyResize(
+        original,
+        width: _inputWidth,
+        height: _inputHeight,
+        interpolation: img.Interpolation.linear,
+      );
 
-      final resizedContent = img.copyResize(original, width: newW, height: newH);
-      final canvas = img.Image(width: _inputW, height: _inputH);
-      img.fill(canvas, color: img.ColorRgb8(0, 0, 0)); // الحشوة السوداء
-      img.compositeImage(canvas, resizedContent, dstX: padX, dstY: padY);
-
-      // 2. تحضير المصفوفة
-      final input = [
+      // مهم جدًا: ClearScanner يرسل RGB الخام 0..255 إلى FLOAT32.
+      // لا تقسم القيم على 255.
+      final input = <List<List<List<double>>>>[
         List.generate(
-          _inputH,
-          (y) => List.generate(_inputW, (x) {
-            final p = canvas.getPixel(x, y);
-            return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
-          }),
+          _inputHeight,
+          (y) => List.generate(
+            _inputWidth,
+            (x) {
+              final pixel = resized.getPixel(x, y);
+              return <double>[
+                pixel.r.toDouble(),
+                pixel.g.toDouble(),
+                pixel.b.toDouble(),
+              ];
+            },
+          ),
         ),
       ];
 
       final outputs = <int, Object>{};
       for (int i = 0; i < _outputCount; i++) {
-        outputs[i] = _buildNestedZeros(_interpreter!.getOutputTensor(i).shape);
+        outputs[i] = _buildNestedZeros(
+          interpreter.getOutputTensor(i).shape,
+        );
       }
 
-      _interpreter!.runForMultipleInputs([input], outputs);
+      interpreter.runForMultipleInputs([input], outputs);
 
-      for (int i = 0; i < _outputCount; i++) {
-        final shape = _interpreter!.getOutputTensor(i).shape;
-        // البحث عن مخرج النقاط الأربع
-        if (shape.length == 4 && shape[2] == 4 && shape[3] == 2) {
-          final result = _extractCorners(outputs[i], origW, origH, scale, padX, padY);
-          lastDebugInfo = 'تم الكشف بنجاح.\nالنقاط:\n$result';
-          return result;
-        }
+      // في هذا النموذج تحديدًا:
+      // :1 = keypoints [1,1,4,2]
+      // :5 = keypoint confidence [1,1,4]
+      final keypointOutputIndex = _findOutputIndex(
+        interpreter,
+        namePart: ':1',
+        requiredShape: (shape) =>
+            shape.length == 4 && shape[2] == 4 && shape[3] == 2,
+        fallback: _findShapeIndex(
+          interpreter,
+          (shape) =>
+              shape.length == 4 && shape[2] == 4 && shape[3] == 2,
+        ),
+      );
+
+      if (keypointOutputIndex == null) {
+        lastDebugInfo = 'لم يتم العثور على مخرج النقاط الأربع';
+        return null;
       }
-      return null;
-    } catch (e) {
-      lastDebugInfo = 'خطأ: $e';
+
+      final scoreOutputIndex = _findOutputIndex(
+        interpreter,
+        namePart: ':5',
+        requiredShape: (shape) =>
+            shape.length == 3 && shape[1] == 1 && shape[2] == 4,
+        fallback: _findShapeIndex(
+          interpreter,
+          (shape) =>
+              shape.length == 3 && shape[1] == 1 && shape[2] == 4,
+        ),
+      );
+
+      if (scoreOutputIndex == null) {
+        lastDebugInfo = 'لم يتم العثور على درجات ثقة الزوايا الأربع';
+        return null;
+      }
+
+      final keypointValues = _flattenNumbers(outputs[keypointOutputIndex]!);
+      final scoreValues = _flattenNumbers(outputs[scoreOutputIndex]!);
+
+      if (keypointValues.length < 8 || scoreValues.length < 4) {
+        lastDebugInfo = [
+          'مخرجات غير مكتملة',
+          'keypoints=${keypointValues.length}',
+          'scores=${scoreValues.length}',
+        ].join('\n');
+        return null;
+      }
+
+      final scores = scoreValues.take(4).toList();
+      final meanConfidence =
+          scores.reduce((a, b) => a + b) / scores.length;
+
+      // ClearScanner يرفض النتيجة عندما تكون الثقة <= 0.75.
+      if (meanConfidence <= _minimumConfidence) {
+        lastDebugInfo =
+            'تم رفض الكشف: متوسط الثقة ${meanConfidence.toStringAsFixed(4)}';
+        return null;
+      }
+
+      // المخرج الأصلي هو أزواج [y, x]، وليس [x, y].
+      // ClearScanner يحولها إلى PointF(x, y) هكذا:
+      // topLeft     = (values[1], values[0])
+      // topRight    = (values[3], values[2])
+      // bottomRight = (values[5], values[4])
+      // bottomLeft  = (values[7], values[6])
+      final normalizedCorners = <Offset>[
+        Offset(
+          _clamp01(keypointValues[1]),
+          _clamp01(keypointValues[0]),
+        ),
+        Offset(
+          _clamp01(keypointValues[3]),
+          _clamp01(keypointValues[2]),
+        ),
+        Offset(
+          _clamp01(keypointValues[5]),
+          _clamp01(keypointValues[4]),
+        ),
+        Offset(
+          _clamp01(keypointValues[7]),
+          _clamp01(keypointValues[6]),
+        ),
+      ];
+
+      // إرجاع بكسلات الصورة الأصلية حتى يبقى باقي مشروعك متوافقًا.
+      final corners = normalizedCorners
+          .map(
+            (point) => Offset(
+              point.dx * originalWidth,
+              point.dy * originalHeight,
+            ),
+          )
+          .toList(growable: false);
+
+      lastDebugInfo = [
+        'تم الكشف بنجاح',
+        'meanConfidence=${meanConfidence.toStringAsFixed(4)}',
+        ...corners.asMap().entries.map(
+              (entry) =>
+                  '${_cornerName(entry.key)}: '
+                  'x=${entry.value.dx.toStringAsFixed(1)}, '
+                  'y=${entry.value.dy.toStringAsFixed(1)}',
+            ),
+      ].join('\n');
+
+      return corners;
+    } catch (e, stackTrace) {
+      lastDebugInfo = 'خطأ أثناء الكشف: $e';
+      debugPrint('$lastDebugInfo\n$stackTrace');
       return null;
     }
+  }
+
+  static int? _findOutputIndex(
+    Interpreter interpreter, {
+    required String namePart,
+    required bool Function(List<int> shape) requiredShape,
+    required int? fallback,
+  }) {
+    for (int i = 0; i < interpreter.getOutputTensors().length; i++) {
+      final tensor = interpreter.getOutputTensor(i);
+      if (tensor.name.contains(namePart) && requiredShape(tensor.shape)) {
+        return i;
+      }
+    }
+    return fallback;
+  }
+
+  static int? _findShapeIndex(
+    Interpreter interpreter,
+    bool Function(List<int> shape) predicate,
+  ) {
+    for (int i = 0; i < interpreter.getOutputTensors().length; i++) {
+      if (predicate(interpreter.getOutputTensor(i).shape)) return i;
+    }
+    return null;
+  }
+
+  static List<double> _flattenNumbers(dynamic value) {
+    final result = <double>[];
+
+    void visit(dynamic item) {
+      if (item is List) {
+        for (final child in item) {
+          visit(child);
+        }
+      } else if (item is num) {
+        result.add(item.toDouble());
+      }
+    }
+
+    visit(value);
+    return result;
   }
 
   static Object _buildNestedZeros(List<int> shape) {
     if (shape.isEmpty) return 0.0;
-    if (shape.length == 1) return List.filled(shape[0], 0.0);
-    return List.generate(shape[0], (_) => _buildNestedZeros(shape.sublist(1)));
+    if (shape.length == 1) return List<double>.filled(shape[0], 0.0);
+    return List<Object>.generate(
+      shape[0],
+      (_) => _buildNestedZeros(shape.sublist(1)),
+    );
   }
 
-  static List<Offset>? _extractCorners(
-    dynamic raw, int origW, int origH, double scale, int padX, int padY
-  ) {
-    dynamic level = raw;
-    while (level is List && level.isNotEmpty && level[0] is List && 
-           (level[0] as List).isNotEmpty && (level[0] as List)[0] is List) {
-      level = level[0];
+  static double _clamp01(double value) {
+    if (value.isNaN || value.isInfinite) return 0.0;
+    return value.clamp(0.0, 1.0).toDouble();
+  }
+
+  static String _cornerName(int index) {
+    switch (index) {
+      case 0:
+        return 'topLeft';
+      case 1:
+        return 'topRight';
+      case 2:
+        return 'bottomRight';
+      case 3:
+        return 'bottomLeft';
+      default:
+        return 'corner$index';
     }
-    if (level is! List || level.length != 4) return null;
-
-    final points = <Offset>[];
-    for (final kp in level) {
-      // إحداثيات نسبية من الموديل
-      double yNorm = (kp[0] as num).toDouble().clamp(0.0, 1.0);
-      double xNorm = (kp[1] as num).toDouble().clamp(0.0, 1.0);
-
-      // 1. ضرب النسبة في حجم الإدخال الكامل (224)
-      double px = xNorm * _inputW;
-      double py = yNorm * _inputH;
-
-      // 2. إزالة الحشوة السوداء (Padding) رياضياً
-      double unpaddedX = px - padX;
-      double unpaddedY = py - padY;
-
-      // 3. إعادة التكبير ليتطابق مع الصورة الأصلية
-      double xOrig = unpaddedX / scale;
-      double yOrig = unpaddedY / scale;
-
-      points.add(Offset(
-        xOrig.clamp(0.0, origW.toDouble()), 
-        yOrig.clamp(0.0, origH.toDouble())
-      ));
-    }
-
-    // الترتيب الهندسي للزوايا لضمان عدم تقاطع الخطوط (TL, TR, BR, BL)
-    Offset topLeft = points[0], topRight = points[0];
-    Offset bottomRight = points[0], bottomLeft = points[0];
-    double minSum = double.infinity, maxSum = -double.infinity;
-    double minDiff = double.infinity, maxDiff = -double.infinity;
-
-    for (final p in points) {
-      final sum = p.dx + p.dy;
-      final diff = p.dx - p.dy;
-      if (sum < minSum) { minSum = sum; topLeft = p; }
-      if (sum > maxSum) { maxSum = sum; bottomRight = p; }
-      if (diff > maxDiff) { maxDiff = diff; topRight = p; }
-      if (diff < minDiff) { minDiff = diff; bottomLeft = p; }
-    }
-
-    return [topLeft, topRight, bottomRight, bottomLeft];
   }
 }
